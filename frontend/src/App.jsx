@@ -37,7 +37,125 @@ export default function App() {
   const [headlines, setHeadlines] = useState([]);
   const [currentStyle, setCurrentStyle] = useState(localStorage.getItem("style") || "Landscape");
   const [selectedCountry, setSelectedCountry] = useState(null);
+  const [servicesStatus, setServicesStatus] = useState({
+    chatgpt: false,
+    news: false,
+    loading: true
+  });
+  const [costInfo, setCostInfo] = useState(null);
+  const [recentNews, setRecentNews] = useState([]);
+  const [aiAnalysis, setAiAnalysis] = useState(null);
   const borderManagerRef = useRef(new BorderManager());
+
+  // Check services status and fetch data
+  const checkServicesStatus = async () => {
+    try {
+      console.log("Checking services status...");
+      
+      // Check health endpoint
+      const healthResponse = await fetch(`${API}/health`);
+      if (!healthResponse.ok) {
+        throw new Error(`Health check failed: ${healthResponse.status}`);
+      }
+      const healthData = await healthResponse.json();
+      console.log("Health data:", healthData);
+      
+      // Check cost info
+      const costResponse = await fetch(`${API}/costs`);
+      const costData = await costResponse.json();
+      
+      const servicesAvailable = healthData.services?.chatgpt_service && healthData.services?.realtime_service;
+      
+      setServicesStatus({
+        chatgpt: healthData.services?.chatgpt_service || false,
+        news: healthData.services?.realtime_service || false,
+        loading: false
+      });
+      
+      setCostInfo(costData);
+      
+      // If services are available, fetch some data
+      if (servicesAvailable && healthData.mode === "enhanced") {
+        console.log("Services available, fetching data...");
+        await fetchRecentNews();
+        await fetchAiAnalysis();
+      } else {
+        console.log("Services not available, using demo data");
+        // Set demo data even if services aren't available
+        setRecentNews([
+          { title: "Global tensions rise in Eastern Europe", source: "Demo News", published_at: new Date().toISOString() },
+          { title: "Economic sanctions impact global markets", source: "Demo News", published_at: new Date().toISOString() },
+          { title: "Diplomatic talks continue in Geneva", source: "Demo News", published_at: new Date().toISOString() }
+        ]);
+        setAiAnalysis([
+          { type: "diplomatic", title: "AI Analysis: Regional tensions escalating", description: "Analysis suggests increased military activity in the region", timestamp: new Date().toISOString() },
+          { type: "economic", title: "AI Analysis: Economic indicators shifting", description: "Market analysis predicts currency fluctuations", timestamp: new Date().toISOString() }
+        ]);
+      }
+    } catch (error) {
+      console.error("Error checking services:", error);
+      setServicesStatus({
+        chatgpt: false,
+        news: false,
+        loading: false
+      });
+      // Set demo data on error
+      setRecentNews([
+        { title: "Global tensions rise in Eastern Europe", source: "Demo News", published_at: new Date().toISOString() },
+        { title: "Economic sanctions impact global markets", source: "Demo News", published_at: new Date().toISOString() },
+        { title: "Diplomatic talks continue in Geneva", source: "Demo News", published_at: new Date().toISOString() }
+      ]);
+      setAiAnalysis([
+        { type: "diplomatic", title: "AI Analysis: Regional tensions escalating", description: "Analysis suggests increased military activity in the region", timestamp: new Date().toISOString() },
+        { type: "economic", title: "AI Analysis: Economic indicators shifting", description: "Market analysis predicts currency fluctuations", timestamp: new Date().toISOString() }
+      ]);
+    }
+  };
+
+  const fetchRecentNews = async () => {
+    try {
+      // Create a temporary session for demo data
+      const sessionResponse = await fetch(`${API}/sessions`, { method: "POST" });
+      const sessionData = await sessionResponse.json();
+      const sessionId = sessionData.session_id;
+      
+      const response = await fetch(`${API}/sessions/${sessionId}/news?limit=3`);
+      const data = await response.json();
+      if (data.headlines) {
+        setRecentNews(data.headlines);
+      }
+    } catch (error) {
+      console.error("Error fetching news:", error);
+      // Set some demo data if API fails
+      setRecentNews([
+        { title: "Global tensions rise in Eastern Europe", source: "Demo News", published_at: new Date().toISOString() },
+        { title: "Economic sanctions impact global markets", source: "Demo News", published_at: new Date().toISOString() },
+        { title: "Diplomatic talks continue in Geneva", source: "Demo News", published_at: new Date().toISOString() }
+      ]);
+    }
+  };
+
+  const fetchAiAnalysis = async () => {
+    try {
+      // Create a temporary session for demo data
+      const sessionResponse = await fetch(`${API}/sessions`, { method: "POST" });
+      const sessionData = await sessionResponse.json();
+      const sessionId = sessionData.session_id;
+      
+      const response = await fetch(`${API}/sessions/${sessionId}/events?limit=2`);
+      const data = await response.json();
+      if (data.events) {
+        setAiAnalysis(data.events);
+      }
+    } catch (error) {
+      console.error("Error fetching AI analysis:", error);
+      // Set some demo data if API fails
+      setAiAnalysis([
+        { type: "diplomatic", title: "AI Analysis: Regional tensions escalating", description: "Analysis suggests increased military activity in the region", timestamp: new Date().toISOString() },
+        { type: "economic", title: "AI Analysis: Economic indicators shifting", description: "Market analysis predicts currency fluctuations", timestamp: new Date().toISOString() }
+      ]);
+    }
+  };
 
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -129,6 +247,9 @@ export default function App() {
           description: f.properties.description
         });
       });
+
+      // Check services status after map loads
+      checkServicesStatus();
     });
 
     return () => map.remove();
@@ -364,6 +485,139 @@ export default function App() {
             </div>
           </div>
         )}
+      </div>
+
+      {/* Services Status Panel */}
+      <div
+        style={{
+          position: "absolute",
+          left: 12,
+          top: 12,
+          width: 350,
+          background: "#fff",
+          padding: 16,
+          borderRadius: 12,
+          boxShadow: "0 8px 20px rgba(0,0,0,.15)",
+          maxHeight: "80vh",
+          overflowY: "auto"
+        }}
+      >
+        <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 16 }}>
+          🚀 Enhanced Services Status
+        </div>
+
+        {/* Services Status */}
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ fontWeight: 500, marginBottom: 8 }}>Service Status:</div>
+          {servicesStatus.loading ? (
+            <div style={{ color: "#666", fontSize: 14 }}>Loading services...</div>
+          ) : (
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ 
+                  width: 12, 
+                  height: 12, 
+                  borderRadius: "50%", 
+                  backgroundColor: servicesStatus.chatgpt ? "#10b981" : "#ef4444" 
+                }}></span>
+                <span style={{ fontSize: 14 }}>
+                  🤖 OpenAI GPT-4o-mini: {servicesStatus.chatgpt ? "✅ Active" : "❌ Inactive"}
+                </span>
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <span style={{ 
+                  width: 12, 
+                  height: 12, 
+                  borderRadius: "50%", 
+                  backgroundColor: servicesStatus.news ? "#10b981" : "#ef4444" 
+                }}></span>
+                <span style={{ fontSize: 14 }}>
+                  📰 News API: {servicesStatus.news ? "✅ Active" : "❌ Inactive"}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* Cost Information */}
+        {costInfo && (
+          <div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 8 }}>
+            <div style={{ fontWeight: 500, marginBottom: 8 }}>💰 Cost Info:</div>
+            <div style={{ fontSize: 12, color: "#666" }}>
+              <div>Model: {costInfo.pricing?.model || "N/A"}</div>
+              <div>Input: {costInfo.pricing?.input_per_1m_tokens || "N/A"}</div>
+              <div>Output: {costInfo.pricing?.output_per_1m_tokens || "N/A"}</div>
+              {costInfo.cost_estimates && (
+                <div style={{ marginTop: 4 }}>
+                  <div>Hourly: {costInfo.cost_estimates.hourly_gameplay}</div>
+                  <div>Monthly: {costInfo.cost_estimates.monthly}</div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Recent News */}
+        {recentNews.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 500, marginBottom: 8 }}>📰 Recent News:</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {recentNews.map((news, index) => (
+                <div key={index} style={{ 
+                  padding: 8, 
+                  background: "#f8fafc", 
+                  borderRadius: 6,
+                  fontSize: 12 
+                }}>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>{news.title}</div>
+                  <div style={{ color: "#666", fontSize: 11 }}>{news.summary}</div>
+                  <div style={{ color: "#888", fontSize: 10, marginTop: 4 }}>
+                    Source: {news.source} • {new Date(news.timestamp).toLocaleTimeString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* AI Analysis */}
+        {aiAnalysis && aiAnalysis.length > 0 && (
+          <div style={{ marginBottom: 16 }}>
+            <div style={{ fontWeight: 500, marginBottom: 8 }}>🤖 AI Analysis:</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              {aiAnalysis.map((event, index) => (
+                <div key={index} style={{ 
+                  padding: 8, 
+                  background: "#f0f9ff", 
+                  borderRadius: 6,
+                  fontSize: 12 
+                }}>
+                  <div style={{ fontWeight: 500, marginBottom: 4 }}>{event.title}</div>
+                  <div style={{ color: "#666", fontSize: 11 }}>{event.description}</div>
+                  <div style={{ color: "#888", fontSize: 10, marginTop: 4 }}>
+                    {new Date(event.timestamp).toLocaleTimeString()}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Refresh Button */}
+        <button 
+          onClick={checkServicesStatus}
+          style={{
+            padding: "8px 16px",
+            background: "#3b82f6",
+            color: "white",
+            border: "none",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 12
+          }}
+        >
+          🔄 Refresh Status
+        </button>
       </div>
 
       <div
