@@ -7,39 +7,15 @@ class BorderManager {
   }
 
   async initialize(map) {
-    console.log("BorderManager initialize called");
     this.map = map;
     this.source = map.getSource("borders");
     
     // Load initial borders from static file
     try {
-      console.log("Loading borders-enhanced-detailed.json");
       const response = await fetch('/borders-enhanced-detailed.json?v=' + Date.now());
       this.borders = await response.json();
       this.source.setData(this.borders);
-      console.log(`Loaded ${this.borders.features.length} countries with enhanced political data and detailed borders`);
       
-      // Debug faction distribution
-      const factions = {};
-      this.borders.features.forEach(f => {
-        const faction = f.properties.faction;
-        factions[faction] = (factions[faction] || 0) + 1;
-      });
-      console.log('Faction distribution:', factions);
-      
-      // Debug NATO_ALIGNED countries
-      const natoAligned = this.borders.features.filter(f => f.properties.faction === 'NATO_ALIGNED');
-      console.log('NATO_ALIGNED countries:', natoAligned.map(f => f.properties.name));
-      
-
-      
-      // Check for nuclear weapons in the data
-      const nuclearCountries = this.borders.features.filter(f => f.properties.nuclear_weapons > 0);
-      console.log(`Found ${nuclearCountries.length} countries with nuclear weapons:`, 
-        nuclearCountries.map(f => `${f.properties.name} (${f.properties.nuclear_weapons})`));
-      
-      // Update nuclear indicators after borders load
-      console.log("Calling updateNuclearIndicators");
       this.updateNuclearIndicators();
     } catch (error) {
       console.error('Failed to load enhanced detailed borders:', error);
@@ -48,7 +24,6 @@ class BorderManager {
         const fallbackResponse = await fetch('/borders.json?v=' + Date.now());
         this.borders = await fallbackResponse.json();
         this.source.setData(this.borders);
-        console.log(`Loaded ${this.borders.features.length} countries with fallback data`);
       } catch (fallbackError) {
         console.error('Failed to load fallback borders:', fallbackError);
       }
@@ -56,11 +31,7 @@ class BorderManager {
   }
 
   updateNuclearIndicators() {
-    console.log("=== updateNuclearIndicators called ===");
     if (!this.map || !this.borders) {
-      console.log("❌ Missing map or borders data");
-      console.log("Map:", !!this.map);
-      console.log("Borders:", !!this.borders);
       return;
     }
     
@@ -69,22 +40,12 @@ class BorderManager {
       features: []
     };
     
-    console.log(`🔍 Checking ${this.borders.features.length} countries for nuclear weapons`);
-    
     // Extract nuclear countries and calculate their centers
-    let foundNuclear = 0;
-    this.borders.features.forEach((feature, index) => {
+    this.borders.features.forEach((feature) => {
       const props = feature.properties;
-      
-      // Debug first few countries
-      if (index < 5) {
-        console.log(`Country ${index}: ${props.name} - nuclear_weapons: ${props.nuclear_weapons}, status: ${props.nuclear_status}`);
-      }
       
       if ((props.nuclear_weapons > 0 && props.nuclear_status !== 'none') || 
           (props.nuclear_status === 'suspected')) {
-        foundNuclear++;
-        console.log(`✅ Processing nuclear country: ${props.name} with ${props.nuclear_weapons} warheads`);
         
         // Use capital coordinates if available, otherwise calculate geometric center
         let centerLng, centerLat;
@@ -93,7 +54,6 @@ class BorderManager {
           // Use capital coordinates
           centerLng = props.capital[0];
           centerLat = props.capital[1];
-          console.log(`📍 Capital: [${centerLng}, ${centerLat}]`);
         } else {
           // Fallback to geometric center calculation
           centerLng = 0;
@@ -117,14 +77,12 @@ class BorderManager {
             });
           }
           
-                     if (totalPoints > 0) {
-             centerLng /= totalPoints;
-             centerLat /= totalPoints;
-             console.log(`📍 Geometric center: [${centerLng}, ${centerLat}]`);
-           } else {
-             console.log(`❌ No valid coordinates for ${props.name}`);
-             return; // Skip this iteration
-           }
+          if (totalPoints > 0) {
+            centerLng /= totalPoints;
+            centerLat /= totalPoints;
+          } else {
+            return; // Skip this iteration
+          }
         }
         
         nuclearData.features.push({
@@ -139,18 +97,10 @@ class BorderManager {
       }
     });
     
-    console.log(`🎯 Created ${nuclearData.features.length} nuclear indicators (found ${foundNuclear} nuclear countries)`);
-    console.log("📊 Nuclear data:", nuclearData);
-    
     // Update nuclear indicators source
     const nuclearSource = this.map.getSource("nuclear-indicators");
     if (nuclearSource) {
-      console.log("🔄 Updating nuclear indicators source");
       nuclearSource.setData(nuclearData);
-      console.log("✅ Nuclear indicators source updated successfully");
-    } else {
-      console.error("❌ Nuclear indicators source not found!");
-      console.log("Available sources:", this.map.getStyle().sources);
     }
   }
 
@@ -177,7 +127,6 @@ class BorderManager {
 
     // Update the map source
     this.source.setData(this.borders);
-    console.log(`Updated ${countryId}:`, updates);
     
     // Update nuclear indicators if this affects nuclear data
     if (updates.nuclear_weapons !== undefined || updates.nuclear_status !== undefined) {

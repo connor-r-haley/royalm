@@ -6,21 +6,11 @@ import BorderManager from "./borderManager";
 const API = "http://localhost:8000";
 const MAPTILER_KEY = "A4684uteIMrjertm4Tjw";
 const STYLES = {
-   // Aquarelle:        `https://api.maptiler.com/maps/aquarelle/style.json?key=${MAPTILER_KEY}`,
-  // Backdrop:         `https://api.maptiler.com/maps/backdrop/style.json?key=${MAPTILER_KEY}`,
-  // Basic:            `https://api.maptiler.com/maps/basic-v2/style.json?key=${MAPTILER_KEY}`,
-  // Bright:           `https://api.maptiler.com/maps/bright-v2/style.json?key=${MAPTILER_KEY}`,
-  // Dataviz:          `https://api.maptiler.com/maps/dataviz/style.json?key=${MAPTILER_KEY}`,
   Main:        `https://api.maptiler.com/maps/landscape/style.json?key=${MAPTILER_KEY}`,
-  // Ocean:            `https://api.maptiler.com/maps/ocean/style.json?key=${MAPTILER_KEY}`,
-  // OpenStreetMap:    `https://api.maptiler.com/maps/openstreetmap/style.json?key=${MAPTILER_KEY}`,
   SatelliteMain:        `https://api.maptiler.com/maps/satellite/style.json?key=${MAPTILER_KEY}`,          // imagery only
   ModernPolitical:          `https://api.maptiler.com/maps/outdoor-v2/style.json?key=${MAPTILER_KEY}`,
   SatellitePolitical:  `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`,             // imagery + labels
-  // Streets:          `https://api.maptiler.com/maps/streets-v2/style.json?key=${MAPTILER_KEY}`,
   GreyscalePolitical:            `https://api.maptiler.com/maps/toner-v2/style.json?key=${MAPTILER_KEY}`,           // black & white
-  // Topo:             `https://api.maptiler.com/maps/topo/style.json?key=${MAPTILER_KEY}`,
-  // Winter:           `https://api.maptiler.com/maps/winter/style.json?key=${MAPTILER_KEY}`,
   Landscape:        `https://api.maptiler.com/maps/landscape/style.json?key=${MAPTILER_KEY}`, // default (minimal borders)
   TonerBW:          `https://api.maptiler.com/maps/toner-v2/style.json?key=${MAPTILER_KEY}`,   // high contrast
   SatelliteHybrid:  `https://api.maptiler.com/maps/hybrid/style.json?key=${MAPTILER_KEY}`,     // imagery + labels
@@ -50,15 +40,12 @@ export default function App() {
   // Check services status and fetch data
   const checkServicesStatus = async () => {
     try {
-      console.log("Checking services status...");
-      
       // Check health endpoint
       const healthResponse = await fetch(`${API}/health`);
       if (!healthResponse.ok) {
         throw new Error(`Health check failed: ${healthResponse.status}`);
       }
       const healthData = await healthResponse.json();
-      console.log("Health data:", healthData);
       
       // Check cost info
       const costResponse = await fetch(`${API}/costs`);
@@ -76,11 +63,9 @@ export default function App() {
       
       // If services are available, fetch some data
       if (servicesAvailable && healthData.mode === "enhanced") {
-        console.log("Services available, fetching data...");
         await fetchRecentNews();
         await fetchAiAnalysis();
       } else {
-        console.log("Services not available, using demo data");
         // Set demo data even if services aren't available
         setRecentNews([
           { title: "Global tensions rise in Eastern Europe", source: "Demo News", published_at: new Date().toISOString() },
@@ -687,45 +672,7 @@ export default function App() {
           <button onClick={() => assignFaction("SWING")}>Swing</button>
           <button onClick={() => assignFaction("NATO_ALIGNED")}>NATO Aligned</button>
         </div>
-        <div style={{marginTop:8}}>
-          <button onClick={() => {
-            console.log("Manual nuclear test");
-            const source = mapRef.current?.getSource("nuclear-indicators");
-            if (source) {
-              const testData = {
-                type: "FeatureCollection",
-                features: [
-                  {
-                    type: "Feature",
-                    properties: {
-                      name: "Test Nuclear",
-                      nuclear_weapons: 1000,
-                      nuclear_status: "confirmed"
-                    },
-                    geometry: {
-                      type: "Point",
-                      coordinates: [0, 0] // Center of the world
-                    }
-                  }
-                ]
-              };
-              source.setData(testData);
-              console.log("Set test nuclear data:", testData);
-            } else {
-              console.error("No nuclear source found");
-            }
-          }}>
-            Test Nuclear (Center)
-          </button>
-          <button onClick={() => {
-            console.log("Manual data refresh");
-            if (borderManagerRef.current) {
-              borderManagerRef.current.initialize(mapRef.current);
-            }
-          }} style={{marginLeft: 8}}>
-            Refresh Data
-          </button>
-        </div>
+
           </div>
         )}
       </div>
