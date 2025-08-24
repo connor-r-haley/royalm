@@ -190,9 +190,11 @@ export default function App() {
         paint: {
           "fill-color": [
             "match", ["get", "faction"],
-            "US", "#2563eb",
-            "RU", "#dc2626",
-            /* else */ "#9ca3af"
+            "NATO", "#2563eb",           // NATO - Blue
+            "RUSSIA_BLOC", "#dc2626",    // Russia Bloc - Red
+            "CHINA_BLOC", "#16a34a",     // China Bloc - Green
+            "SWING", "#eab308",          // Swing States - Yellow
+            /* else */ "#9ca3af"         // Neutral - Gray
           ],
           "fill-opacity": [
             "interpolate", ["linear"], ["get", "morale"],
@@ -216,22 +218,112 @@ export default function App() {
         }
       });
 
-      // 6. hover highlight logic
+      // 6. Nuclear weapon indicators - positioned at country centers
+      // Create nuclear indicators source with empty data initially
+      const nuclearData = {
+        type: "FeatureCollection",
+        features: []
+      };
+      
+      map.addSource("nuclear-indicators", { type: "geojson", data: nuclearData });
+      map.addLayer({
+        id: "nuclear-indicators",
+        type: "circle",
+        source: "nuclear-indicators",
+        layout: {
+          "circle-radius": [
+            "interpolate", ["linear"], ["get", "nuclear_weapons"],
+            0, 4, 100, 6, 1000, 8, 6000, 12
+          ],
+          "circle-allow-overlap": true,
+          "circle-ignore-placement": true
+        },
+        paint: {
+          "circle-color": [
+            "match", ["get", "nuclear_status"],
+            "confirmed", "#dc2626",    // Red for confirmed
+            "estimated", "#16a34a",    // Green for estimated
+            "suspected", "#8b5cf6",    // Purple for suspected
+            "#6b7280"                 // Gray for unknown
+          ],
+          "circle-stroke-color": "#ffffff",
+          "circle-stroke-width": 1,
+          "circle-opacity": 0.9
+        }
+      });
+
+      // 7. hover highlight logic and tooltips
       let hoverId = null;
+      let tooltip = null;
+
+      // Create tooltip element
+      const createTooltip = () => {
+        const div = document.createElement('div');
+        div.className = 'country-tooltip';
+        div.style.cssText = `
+          position: absolute;
+          background: rgba(0, 0, 0, 0.8);
+          color: white;
+          padding: 8px 12px;
+          border-radius: 6px;
+          font-size: 12px;
+          font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+          pointer-events: none;
+          z-index: 1000;
+          max-width: 250px;
+          white-space: nowrap;
+        `;
+        return div;
+      };
+
       map.on("mousemove", "borders-fill", (e) => {
         if (!e.features?.length) return;
-        const id = e.features[0].properties.id;
+        const feature = e.features[0];
+        const id = feature.properties.id;
+        
         if (hoverId && hoverId !== id) {
           map.setFeatureState({ source: "borders", id: hoverId }, { hover: false });
         }
         hoverId = id;
         map.setFeatureState({ source: "borders", id }, { hover: true });
+
+        // Update tooltip
+        if (!tooltip) {
+          tooltip = createTooltip();
+          document.body.appendChild(tooltip);
+        }
+
+        const props = feature.properties;
+        let tooltipContent = `<strong>${props.name}</strong><br>`;
+        tooltipContent += `Faction: ${props.faction}<br>`;
+        tooltipContent += `Alliance: ${props.alliance || 'None'}<br>`;
+        tooltipContent += `Morale: ${Math.round(props.morale * 100)}%`;
+        
+        if (props.nuclear_weapons > 0) {
+          const statusText = props.nuclear_status === 'confirmed' ? 'Confirmed' : 
+                           props.nuclear_status === 'estimated' ? 'Estimated' : 
+                           props.nuclear_status === 'suspected' ? 'Suspected' : 'Unknown';
+          tooltipContent += `<br>Nuclear: ${props.nuclear_weapons} warheads (${statusText})`;
+        }
+        
+        if (props.description) {
+          tooltipContent += `<br><em>${props.description}</em>`;
+        }
+
+        tooltip.innerHTML = tooltipContent;
+        tooltip.style.left = e.point.x + 10 + 'px';
+        tooltip.style.top = e.point.y - 10 + 'px';
       });
+
       map.on("mouseleave", "borders-fill", () => {
         if (hoverId) {
           map.setFeatureState({ source: "borders", id: hoverId }, { hover: false });
         }
         hoverId = null;
+        if (tooltip) {
+          document.body.removeChild(tooltip);
+          tooltip = null;
+        }
       });
 
       // 7. Click select (opens side panel)
@@ -250,6 +342,13 @@ export default function App() {
 
       // Check services status after map loads
       checkServicesStatus();
+      
+      // Ensure nuclear indicators are updated after map loads
+      setTimeout(() => {
+        if (borderManagerRef.current) {
+          borderManagerRef.current.updateNuclearIndicators();
+        }
+      }, 1000);
     });
 
     return () => map.remove();
@@ -353,7 +452,15 @@ export default function App() {
         mapRef.current.addLayer({
           id: "borders-fill", type: "fill", source: "borders",
           paint: {
-            "fill-color": ["match", ["get","faction"], "US","#2563eb","RU","#dc2626","#9ca3af"],
+            "fill-color": [
+            "case",
+            ["==", ["get", "faction"], "NATO"], "#2563eb",
+            ["==", ["get", "faction"], "NATO_ALIGNED"], "#ffff00",
+            ["==", ["get", "faction"], "RUSSIA_BLOC"], "#dc2626",
+            ["==", ["get", "faction"], "CHINA_BLOC"], "#16a34a",
+            ["==", ["get", "faction"], "SWING"], "#eab308",
+            "#9ca3af"
+          ],
             "fill-opacity": ["interpolate", ["linear"], ["get","morale"], 0,0.20, 1,0.55]
           }
         });
@@ -361,8 +468,53 @@ export default function App() {
           id: "borders-outline", type: "line", source: "borders",
           paint: { "line-color":"#fff", "line-width":[ "case", ["boolean",["feature-state","hover"],false], 3.0, 1.5 ] }
         });
+        
+        // Re-add nuclear indicators layer
+        if (!mapRef.current.getSource("nuclear-indicators")) {
+          mapRef.current.addSource("nuclear-indicators", { 
+            type: "geojson", 
+            data: { type: "FeatureCollection", features: [] } 
+          });
+        }
+        if (!mapRef.current.getLayer("nuclear-indicators")) {
+          mapRef.current.addLayer({
+            id: "nuclear-indicators",
+            type: "circle",
+            source: "nuclear-indicators",
+            layout: {
+              "circle-radius": [
+                "interpolate", ["linear"], ["get", "nuclear_weapons"],
+                0, 4, 100, 6, 1000, 8, 6000, 12
+              ],
+              "circle-allow-overlap": true,
+              "circle-ignore-placement": true
+            },
+                                  paint: {
+              "circle-color": [
+                "match", ["get", "nuclear_status"],
+                "confirmed", "#dc2626",    // Red for confirmed
+                "estimated", "#16a34a",    // Green for estimated
+                "suspected", "#8b5cf6",    // Purple for suspected
+                "#6b7280"                 // Gray for unknown
+              ],
+              "circle-stroke-color": "#ffffff",
+              "circle-stroke-width": 1,
+              "circle-opacity": 0.9
+            }
+          });
+        }
+        // Nuclear indicators will be updated by border manager after borders load
+        if (borderManagerRef.current) {
+          setTimeout(() => borderManagerRef.current.updateNuclearIndicators(), 100);
+        }
+        
+
       } else {
         mapRef.current.getSource("borders").setData(state.borders || emptyFC());
+        // Update nuclear indicators after data is set
+        if (borderManagerRef.current) {
+          setTimeout(() => borderManagerRef.current.updateNuclearIndicators(), 100);
+        }
       }
     });
   }
@@ -388,11 +540,13 @@ export default function App() {
         source: "control",
         paint: {
           "fill-color": [
-            "match",
-            ["get", "faction"],
-            "US", "#2563eb",
-            "RU", "#dc2626",
-            /* else */ "#9ca3af",
+            "case",
+            ["==", ["get", "faction"], "NATO"], "#2563eb",
+            ["==", ["get", "faction"], "NATO_ALIGNED"], "#06b6d4",
+            ["==", ["get", "faction"], "RUSSIA_BLOC"], "#dc2626",
+            ["==", ["get", "faction"], "CHINA_BLOC"], "#16a34a",
+            ["==", ["get", "faction"], "SWING"], "#eab308",
+            "#9ca3af"
           ],
           "fill-opacity": ["interpolate", ["linear"], ["get", "morale"], 0, 0.25, 1, 0.65],
         },
@@ -432,14 +586,15 @@ export default function App() {
           right: 12,
           top: 12,
           width: 300,
-          background: "#fff",
+          background: "#000",
+          color: "#fff",
           padding: 12,
           borderRadius: 12,
           boxShadow: "0 8px 20px rgba(0,0,0,.15)",
         }}
       >
         <div style={{ fontWeight: 600, marginBottom: 8 }}>Step 0 Controls</div>
-        <div style={{ fontSize: 12, color: "#555", marginBottom: 8 }}>{status}</div>
+        <div style={{ fontSize: 12, color: "#ccc", marginBottom: 8 }}>{status}</div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
           <button onClick={newSession}>New Session</button>
@@ -462,27 +617,115 @@ export default function App() {
           </select>
         </div>
 
-        <div style={{ fontSize: 12, color: "#666", marginTop: 8 }}>
+        <div style={{ fontSize: 12, color: "#ccc", marginTop: 8 }}>
           Goal: click Move → Commit → watch carrier move & headline update.
         </div>
 
+        {/* Color Legend */}
+        <div style={{marginTop:12, padding:8, border:"1px solid #333", borderRadius:8, fontSize:11, background:"#111"}}>
+          <div style={{fontWeight:600, marginBottom:6}}>Political Alliances:</div>
+          <div style={{display:"flex", alignItems:"center", gap:4, marginBottom:2}}>
+            <div style={{width:12, height:12, backgroundColor:"#2563eb", borderRadius:2}}></div>
+            <span>NATO (Blue)</span>
+          </div>
+          <div style={{display:"flex", alignItems:"center", gap:4, marginBottom:2}}>
+            <div style={{width:12, height:12, backgroundColor:"#06b6d4", borderRadius:2}}></div>
+            <span>NATO Aligned (Cyan)</span>
+          </div>
+          <div style={{display:"flex", alignItems:"center", gap:4, marginBottom:2}}>
+            <div style={{width:12, height:12, backgroundColor:"#dc2626", borderRadius:2}}></div>
+            <span>Russia Bloc (Red)</span>
+          </div>
+          <div style={{display:"flex", alignItems:"center", gap:4, marginBottom:2}}>
+            <div style={{width:12, height:12, backgroundColor:"#16a34a", borderRadius:2}}></div>
+            <span>China Bloc (Green)</span>
+          </div>
+          <div style={{display:"flex", alignItems:"center", gap:4, marginBottom:6}}>
+            <div style={{width:12, height:12, backgroundColor:"#eab308", borderRadius:2}}></div>
+            <span>Swing States (Yellow)</span>
+          </div>
+          <div style={{fontWeight:600, marginBottom:4}}>Nuclear Indicators:</div>
+          <div style={{display:"flex", alignItems:"center", gap:4, marginBottom:2}}>
+            <div style={{width:8, height:8, borderRadius:"50%", backgroundColor:"#dc2626", border:"1px solid white"}}></div>
+            <span>Confirmed</span>
+          </div>
+          <div style={{display:"flex", alignItems:"center", gap:4, marginBottom:2}}>
+            <div style={{width:8, height:8, borderRadius:"50%", backgroundColor:"#16a34a", border:"1px solid white"}}></div>
+            <span>Estimated</span>
+          </div>
+          <div style={{display:"flex", alignItems:"center", gap:4}}>
+            <div style={{width:8, height:8, borderRadius:"50%", backgroundColor:"#8b5cf6", border:"1px solid white"}}></div>
+            <span>Suspected</span>
+          </div>
+        </div>
+
         {selectedCountry && (
-          <div style={{marginTop:10, padding:8, border:"1px solid #e5e7eb", borderRadius:8}}>
+          <div style={{marginTop:10, padding:8, border:"1px solid #333", borderRadius:8, background:"#111"}}>
             <div style={{fontWeight:600}}>{selectedCountry.name} ({selectedCountry.id})</div>
-            {selectedCountry.mother_country && (
-              <div style={{fontSize:12, color:"#666", marginTop:2}}>
-                Territory of: {selectedCountry.mother_country}
+            <div style={{fontSize:12, color:"#ccc", marginTop:2}}>
+              Faction: {selectedCountry.faction || 'None'}
+            </div>
+            {selectedCountry.alliance && (
+              <div style={{fontSize:12, color:"#ccc"}}>
+                Alliance: {selectedCountry.alliance}
+              </div>
+            )}
+            {selectedCountry.nuclear_weapons > 0 && (
+              <div style={{fontSize:12, color:"#dc2626", fontWeight:500}}>
+                Nuclear: {selectedCountry.nuclear_weapons} warheads ({selectedCountry.nuclear_status})
               </div>
             )}
             {selectedCountry.description && (
-              <div style={{fontSize:11, color:"#888", marginTop:1}}>
+              <div style={{fontSize:11, color:"#aaa", marginTop:1}}>
                 {selectedCountry.description}
               </div>
             )}
-            <div style={{display:"flex", gap:6, marginTop:6}}>
-              <button onClick={() => assignFaction("US")}>Assign US</button>
-              <button onClick={() => assignFaction("RU")}>Assign RU</button>
-            </div>
+                    <div style={{display:"flex", gap:6, marginTop:6, flexWrap:"wrap"}}>
+          <button onClick={() => assignFaction("NATO")}>NATO</button>
+          <button onClick={() => assignFaction("RUSSIA_BLOC")}>Russia Bloc</button>
+          <button onClick={() => assignFaction("CHINA_BLOC")}>China Bloc</button>
+          <button onClick={() => assignFaction("SWING")}>Swing</button>
+          <button onClick={() => assignFaction("NATO_ALIGNED")}>NATO Aligned</button>
+        </div>
+        <div style={{marginTop:8}}>
+          <button onClick={() => {
+            console.log("Manual nuclear test");
+            const source = mapRef.current?.getSource("nuclear-indicators");
+            if (source) {
+              const testData = {
+                type: "FeatureCollection",
+                features: [
+                  {
+                    type: "Feature",
+                    properties: {
+                      name: "Test Nuclear",
+                      nuclear_weapons: 1000,
+                      nuclear_status: "confirmed"
+                    },
+                    geometry: {
+                      type: "Point",
+                      coordinates: [0, 0] // Center of the world
+                    }
+                  }
+                ]
+              };
+              source.setData(testData);
+              console.log("Set test nuclear data:", testData);
+            } else {
+              console.error("No nuclear source found");
+            }
+          }}>
+            Test Nuclear (Center)
+          </button>
+          <button onClick={() => {
+            console.log("Manual data refresh");
+            if (borderManagerRef.current) {
+              borderManagerRef.current.initialize(mapRef.current);
+            }
+          }} style={{marginLeft: 8}}>
+            Refresh Data
+          </button>
+        </div>
           </div>
         )}
       </div>
@@ -494,7 +737,8 @@ export default function App() {
           left: 12,
           top: 12,
           width: 350,
-          background: "#fff",
+          background: "#000",
+          color: "#fff",
           padding: 16,
           borderRadius: 12,
           boxShadow: "0 8px 20px rgba(0,0,0,.15)",
@@ -541,9 +785,9 @@ export default function App() {
 
         {/* Cost Information */}
         {costInfo && (
-          <div style={{ marginBottom: 16, padding: 12, background: "#f8fafc", borderRadius: 8 }}>
+          <div style={{ marginBottom: 16, padding: 12, background: "#111", borderRadius: 8 }}>
             <div style={{ fontWeight: 500, marginBottom: 8 }}>💰 Cost Info:</div>
-            <div style={{ fontSize: 12, color: "#666" }}>
+            <div style={{ fontSize: 12, color: "#ccc" }}>
               <div>Model: {costInfo.pricing?.model || "N/A"}</div>
               <div>Input: {costInfo.pricing?.input_per_1m_tokens || "N/A"}</div>
               <div>Output: {costInfo.pricing?.output_per_1m_tokens || "N/A"}</div>
@@ -565,13 +809,13 @@ export default function App() {
               {recentNews.map((news, index) => (
                 <div key={index} style={{ 
                   padding: 8, 
-                  background: "#f8fafc", 
+                  background: "#111", 
                   borderRadius: 6,
                   fontSize: 12 
                 }}>
                   <div style={{ fontWeight: 500, marginBottom: 4 }}>{news.title}</div>
-                  <div style={{ color: "#666", fontSize: 11 }}>{news.summary}</div>
-                  <div style={{ color: "#888", fontSize: 10, marginTop: 4 }}>
+                  <div style={{ color: "#ccc", fontSize: 11 }}>{news.summary}</div>
+                  <div style={{ color: "#aaa", fontSize: 10, marginTop: 4 }}>
                     Source: {news.source} • {new Date(news.timestamp).toLocaleTimeString()}
                   </div>
                 </div>
@@ -588,13 +832,13 @@ export default function App() {
               {aiAnalysis.map((event, index) => (
                 <div key={index} style={{ 
                   padding: 8, 
-                  background: "#f0f9ff", 
+                  background: "#111", 
                   borderRadius: 6,
                   fontSize: 12 
                 }}>
                   <div style={{ fontWeight: 500, marginBottom: 4 }}>{event.title}</div>
-                  <div style={{ color: "#666", fontSize: 11 }}>{event.description}</div>
-                  <div style={{ color: "#888", fontSize: 10, marginTop: 4 }}>
+                  <div style={{ color: "#ccc", fontSize: 11 }}>{event.description}</div>
+                  <div style={{ color: "#aaa", fontSize: 10, marginTop: 4 }}>
                     {new Date(event.timestamp).toLocaleTimeString()}
                   </div>
                 </div>

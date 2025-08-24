@@ -55,9 +55,25 @@ async def startup_event():
     global chatgpt_service, realtime_service, SERVICES_AVAILABLE
     if SERVICES_AVAILABLE:
         try:
-            chatgpt_service = await get_chatgpt_service()
-            realtime_service = await get_realtime_service()
-            logger.info("Services initialized successfully")
+            # Check if API keys are available
+            openai_key = os.getenv("OPENAI_API_KEY")
+            news_key = os.getenv("NEWS_API_KEY")
+            
+            if openai_key and openai_key != "sk-test-placeholder-key":
+                chatgpt_service = await get_chatgpt_service()
+                logger.info("ChatGPT service initialized successfully")
+            else:
+                logger.warning("OpenAI API key not configured, ChatGPT service disabled")
+                
+            if news_key and news_key != "test-news-api-key":
+                realtime_service = await get_realtime_service()
+                logger.info("Real-time data service initialized successfully")
+            else:
+                logger.warning("News API key not configured, real-time service disabled")
+                
+            # Update SERVICES_AVAILABLE based on actual service availability
+            SERVICES_AVAILABLE = chatgpt_service is not None or realtime_service is not None
+            
         except Exception as e:
             logger.warning(f"Failed to initialize services: {e}")
             SERVICES_AVAILABLE = False
@@ -406,3 +422,7 @@ def get_cost_info():
             "status": "error",
             "message": f"Could not retrieve cost info: {str(e)}"
         }
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)

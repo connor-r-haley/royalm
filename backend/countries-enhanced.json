@@ -1,0 +1,499 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "US",
+        "name": "United States",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 5244,
+        "nuclear_status": "confirmed",
+        "morale": 0.8,
+        "description": "NATO leader, nuclear superpower"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-125, 25], [-125, 50], [-65, 50], [-65, 25], [-125, 25]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "RU",
+        "name": "Russia",
+        "faction": "RUSSIA_BLOC",
+        "alliance": "CSTO",
+        "nuclear_weapons": 5977,
+        "nuclear_status": "confirmed",
+        "morale": 0.7,
+        "description": "Nuclear superpower, CSTO leader"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [20, 50], [20, 80], [180, 80], [180, 50], [20, 50]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "CN",
+        "name": "China",
+        "faction": "CHINA_BLOC",
+        "alliance": "SCO",
+        "nuclear_weapons": 410,
+        "nuclear_status": "confirmed",
+        "morale": 0.8,
+        "description": "Rising superpower, nuclear state"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [73, 18], [73, 54], [135, 54], [135, 18], [73, 18]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "GB",
+        "name": "United Kingdom",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 225,
+        "nuclear_status": "confirmed",
+        "morale": 0.75,
+        "description": "NATO member, nuclear power"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-8, 50], [-8, 60], [2, 60], [2, 50], [-8, 50]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "FR",
+        "name": "France",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 290,
+        "nuclear_status": "confirmed",
+        "morale": 0.7,
+        "description": "NATO member, nuclear power"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-5, 41], [-5, 51], [10, 51], [10, 41], [-5, 41]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "DE",
+        "name": "Germany",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.65,
+        "description": "NATO member, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [6, 47], [6, 55], [15, 55], [15, 47], [6, 47]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "IT",
+        "name": "Italy",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.6,
+        "description": "NATO member, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [6, 36], [6, 47], [18, 47], [18, 36], [6, 36]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "CA",
+        "name": "Canada",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.7,
+        "description": "NATO member, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-140, 42], [-140, 84], [-52, 84], [-52, 42], [-140, 42]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "PL",
+        "name": "Poland",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.8,
+        "description": "NATO member, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [14, 49], [14, 55], [24, 55], [24, 49], [14, 49]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "UA",
+        "name": "Ukraine",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.9,
+        "description": "NATO member, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [22, 44], [22, 52], [40, 52], [40, 44], [22, 44]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "BY",
+        "name": "Belarus",
+        "faction": "RUSSIA_BLOC",
+        "alliance": "CSTO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.6,
+        "description": "CSTO member, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [23, 51], [23, 56], [33, 56], [33, 51], [23, 51]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "KZ",
+        "name": "Kazakhstan",
+        "faction": "RUSSIA_BLOC",
+        "alliance": "CSTO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.5,
+        "description": "CSTO member, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [46, 40], [46, 56], [87, 56], [87, 40], [46, 40]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "IN",
+        "name": "India",
+        "faction": "SWING",
+        "alliance": "QUAD",
+        "nuclear_weapons": 164,
+        "nuclear_status": "confirmed",
+        "morale": 0.7,
+        "description": "Swing state, nuclear power"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [68, 8], [68, 37], [97, 37], [97, 8], [68, 8]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "PK",
+        "name": "Pakistan",
+        "faction": "SWING",
+        "alliance": "none",
+        "nuclear_weapons": 170,
+        "nuclear_status": "confirmed",
+        "morale": 0.6,
+        "description": "Swing state, nuclear power"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [61, 24], [61, 37], [75, 37], [75, 24], [61, 24]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "IL",
+        "name": "Israel",
+        "faction": "SWING",
+        "alliance": "none",
+        "nuclear_weapons": 90,
+        "nuclear_status": "estimated",
+        "morale": 0.8,
+        "description": "Swing state, nuclear power (estimated)"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [34, 29], [34, 33], [36, 33], [36, 29], [34, 29]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "KP",
+        "name": "North Korea",
+        "faction": "CHINA_BLOC",
+        "alliance": "none",
+        "nuclear_weapons": 30,
+        "nuclear_status": "estimated",
+        "morale": 0.7,
+        "description": "China ally, nuclear power (estimated)"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [124, 37], [124, 43], [131, 43], [131, 37], [124, 37]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "IR",
+        "name": "Iran",
+        "faction": "CHINA_BLOC",
+        "alliance": "SCO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "suspected",
+        "morale": 0.6,
+        "description": "China ally, suspected nuclear program"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [44, 25], [44, 40], [63, 40], [63, 25], [44, 25]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "JP",
+        "name": "Japan",
+        "faction": "NATO",
+        "alliance": "QUAD",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.7,
+        "description": "US ally, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [129, 31], [129, 46], [146, 46], [146, 31], [129, 31]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "AU",
+        "name": "Australia",
+        "faction": "NATO",
+        "alliance": "QUAD",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.7,
+        "description": "US ally, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [113, -44], [113, -10], [154, -10], [154, -44], [113, -44]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "BR",
+        "name": "Brazil",
+        "faction": "SWING",
+        "alliance": "BRICS",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.6,
+        "description": "Swing state, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-74, -34], [-74, 5], [-34, 5], [-34, -34], [-74, -34]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "SA",
+        "name": "Saudi Arabia",
+        "faction": "SWING",
+        "alliance": "none",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.5,
+        "description": "Swing state, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [35, 16], [35, 32], [55, 32], [55, 16], [35, 16]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "TR",
+        "name": "Turkey",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.6,
+        "description": "NATO member, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [26, 36], [26, 42], [45, 42], [45, 36], [26, 36]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "EG",
+        "name": "Egypt",
+        "faction": "SWING",
+        "alliance": "none",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.5,
+        "description": "Swing state, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [25, 22], [25, 32], [37, 32], [37, 22], [25, 22]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "MX",
+        "name": "Mexico",
+        "faction": "NATO",
+        "alliance": "NATO",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.6,
+        "description": "US ally, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-118, 15], [-118, 33], [-86, 33], [-86, 15], [-118, 15]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "AR",
+        "name": "Argentina",
+        "faction": "SWING",
+        "alliance": "none",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.5,
+        "description": "Swing state, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [-74, -55], [-74, -21], [-53, -21], [-53, -55], [-74, -55]
+        ]]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "id": "ZA",
+        "name": "South Africa",
+        "faction": "SWING",
+        "alliance": "BRICS",
+        "nuclear_weapons": 0,
+        "nuclear_status": "none",
+        "morale": 0.5,
+        "description": "Swing state, non-nuclear"
+      },
+      "geometry": {
+        "type": "Polygon",
+        "coordinates": [[
+          [16, -35], [16, -22], [33, -22], [33, -35], [16, -35]
+        ]]
+      }
+    }
+  ]
+}
