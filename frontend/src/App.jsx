@@ -174,12 +174,13 @@ export default function App() {
         source: "borders",
         paint: {
           "fill-color": [
-            "match", ["get", "faction"],
-            "NATO", "#2563eb",           // NATO - Blue
-            "RUSSIA_BLOC", "#dc2626",    // Russia Bloc - Red
-            "CHINA_BLOC", "#16a34a",     // China Bloc - Green
-            "SWING", "#eab308",          // Swing States - Yellow
-            /* else */ "#9ca3af"         // Neutral - Gray
+            "case",
+            ["==", ["get", "faction"], "NATO"], "#2563eb",
+            ["==", ["get", "faction"], "NATO_ALIGNED"], "#06b6d4",
+            ["==", ["get", "faction"], "RUSSIA_BLOC"], "#dc2626",
+            ["==", ["get", "faction"], "CHINA_BLOC"], "#16a34a",
+            ["==", ["get", "faction"], "SWING"], "#eab308",
+            "#9ca3af"
           ],
           "fill-opacity": [
             "interpolate", ["linear"], ["get", "morale"],
@@ -440,7 +441,7 @@ export default function App() {
             "fill-color": [
             "case",
             ["==", ["get", "faction"], "NATO"], "#2563eb",
-            ["==", ["get", "faction"], "NATO_ALIGNED"], "#ffff00",
+            ["==", ["get", "faction"], "NATO_ALIGNED"], "#06b6d4",
             ["==", ["get", "faction"], "RUSSIA_BLOC"], "#dc2626",
             ["==", ["get", "faction"], "CHINA_BLOC"], "#16a34a",
             ["==", ["get", "faction"], "SWING"], "#eab308",
