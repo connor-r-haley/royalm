@@ -200,6 +200,95 @@ class RealTimeDataService:
         
         return headlines
     
+    async def get_historical_news(self, start_date: datetime, end_date: datetime) -> List[NewsHeadline]:
+        """Get historical news from NewsAPI for a specific date range"""
+        try:
+            # Format dates for NewsAPI
+            from_date = start_date.strftime("%Y-%m-%d")
+            to_date = end_date.strftime("%Y-%m-%d")
+            
+            # Build query with geopolitical keywords
+            geopolitical_keywords = [
+                "war", "conflict", "treaty", "sanctions", "diplomacy", "military", 
+                "nuclear", "trade", "tariffs", "alliance", "summit", "president",
+                "prime minister", "foreign minister", "defense", "security", "crisis",
+                "protest", "election", "coup", "revolution", "terrorism", "cyber attack"
+            ]
+            
+            # Create a comprehensive query
+            query = " OR ".join(geopolitical_keywords)
+            
+            # Add major countries and regions
+            major_entities = [
+                "United States", "China", "Russia", "United Kingdom", "France", 
+                "Germany", "Japan", "India", "Iran", "Israel", "Ukraine", "Taiwan",
+                "NATO", "European Union", "United Nations", "G7", "G20", "BRICS"
+            ]
+            
+            query += " OR " + " OR ".join(major_entities)
+            
+            params = {
+                "q": query,
+                "from": from_date,
+                "to": to_date,
+                "sortBy": "publishedAt",
+                "pageSize": 50,  # Get more articles for historical analysis
+                "language": "en",
+                "domains": "bbc.com,reuters.com,ap.org,cnn.com,nytimes.com,washingtonpost.com,wsj.com,ft.com,economist.com"
+            }
+            
+            # Make request to NewsAPI
+            url = f"{self.base_url}/everything"
+            response = await self._make_request(url, params)
+            
+            if not response or "articles" not in response:
+                print(f"❌ No historical news found for {from_date} to {to_date}")
+                return []
+            
+            articles = response["articles"]
+            print(f"📰 Found {len(articles)} historical articles from {from_date} to {to_date}")
+            
+            # Convert to NewsHeadline objects
+            news_headlines = []
+            for article in articles:
+                try:
+                    # Parse published date
+                    published_str = article.get("publishedAt", "")
+                    if published_str:
+                        # Remove 'Z' suffix and parse
+                        published_str = published_str.replace('Z', '')
+                        published_date = datetime.fromisoformat(published_str)
+                    else:
+                        published_date = start_date  # Fallback to start date
+                    
+                    # Extract source name safely
+                    source_data = article.get("source", {})
+                    source_name = source_data.get("name", "Unknown Source") if isinstance(source_data, dict) else "Unknown Source"
+                    
+                    # Create NewsHeadline
+                    headline = NewsHeadline(
+                        title=article.get("title", "No Title"),
+                        summary=article.get("description", "No description available"),
+                        source=source_name,
+                        url=article.get("url"),
+                        published_date=published_date,
+                        location=None
+                    )
+                    news_headlines.append(headline)
+                    
+                except Exception as e:
+                    print(f"❌ Error processing historical article: {e}")
+                    continue
+            
+            print(f"✅ Processed {len(news_headlines)} historical news headlines")
+            return news_headlines
+            
+        except Exception as e:
+            print(f"❌ Error getting historical news: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+    
     async def get_country_economic_data(self, country_code: str) -> Optional[EconomicData]:
         """Get current economic data for a country."""
         cache_key = f"economic_{country_code}_{datetime.now().strftime('%Y%m%d')}"

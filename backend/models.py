@@ -3,6 +3,7 @@ from typing import Dict, List, Optional, Any, Union
 from datetime import datetime, date
 from enum import Enum
 import json
+from dataclasses import dataclass, field
 
 # ============================================================================
 # CORE GAME MODELS
@@ -1146,3 +1147,21 @@ class GeopoliticalUpdateResponse(BaseModel):
     economic_changes: List[Dict[str, Any]]
     military_changes: List[Dict[str, Any]]
     analysis: str = Field(description="AI analysis of the updates")
+
+# ============================================================================
+# WORLD BRAIN SIMULATION MODELS
+# ============================================================================
+
+@dataclass
+class WorldBrainState:
+    """State for World Brain monthly progression simulation"""
+    simulation_id: str
+    current_date: datetime
+    countries: Dict[str, Any]
+    news: List[GeneratedNews]
+    map_state: MapState
+    global_indicators: Dict[str, Any]
+    archived_news: List[GeneratedNews] = field(default_factory=list)
+    start_month: Optional[int] = None
+    start_year: Optional[int] = None
+    use_historical_news: bool = False

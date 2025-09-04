@@ -3,7 +3,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import BorderManager from "./borderManager";
 
-const API = "http://localhost:8000";
+const API = "http://localhost:8001";
 const MAPTILER_KEY = "A4684uteIMrjertm4Tjw";
 const STYLES = {
   Main:        `https://api.maptiler.com/maps/landscape/style.json?key=${MAPTILER_KEY}`,
@@ -33,8 +33,6 @@ export default function App() {
     loading: true
   });
   const [costInfo, setCostInfo] = useState(null);
-  const [recentNews, setRecentNews] = useState([]);
-  const [aiAnalysis, setAiAnalysis] = useState(null);
   const borderManagerRef = useRef(new BorderManager());
   const [showCountrySelection, setShowCountrySelection] = useState(false);
   const [playableCountries, setPlayableCountries] = useState([]);
@@ -48,13 +46,25 @@ export default function App() {
   const [playerActions, setPlayerActions] = useState([]);
   const [availableActions, setAvailableActions] = useState([]);
   const [roundSummary, setRoundSummary] = useState(null);
-  const [observeSimulation, setObserveSimulation] = useState(null);
-  const [timelineEvents, setTimelineEvents] = useState([]);
-  const [currentTimelineDate, setCurrentTimelineDate] = useState(null);
-  const [worldStateAtDate, setWorldStateAtDate] = useState(null);
-  const [timelineScrubberVisible, setTimelineScrubberVisible] = useState(false);
+
+  
+  // Psychohistory state
+  const [psychohistorySimulation, setPsychohistorySimulation] = useState(null);
+  const [psychohistoryNews, setPsychohistoryNews] = useState([]);
+  const [psychohistoryMapState, setPsychohistoryMapState] = useState(null);
+  const [psychohistoryTick, setPsychohistoryTick] = useState(0);
+  const [psychohistoryStatus, setPsychohistoryStatus] = useState('idle');
   const [selectedGameMode, setSelectedGameMode] = useState(null);
   const [showMainMenu, setShowMainMenu] = useState(true);
+  const [newsLoading, setNewsLoading] = useState(false);
+  const [selectedStartDate, setSelectedStartDate] = useState(() => {
+    const today = new Date();
+    return {
+      month: today.getMonth() + 1,
+      year: today.getFullYear(),
+      usePresent: true
+    };
+  });
 
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -241,13 +251,28 @@ export default function App() {
     return () => map.remove();
   }, [currentStyle]);
 
+  // Keyboard event handling for Psychohistory
+  useEffect(() => {
+    const handleKeyPress = (event) => {
+      if (selectedGameMode === 'psychohistory' && psychohistoryStatus === 'ready') {
+        if (event.key === 'ArrowRight' || event.key === ' ') {
+          event.preventDefault();
+          advancePsychohistoryWeek();
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyPress);
+    return () => document.removeEventListener('keydown', handleKeyPress);
+  }, [selectedGameMode, psychohistoryStatus, psychohistorySimulation]);
+
   function pushHeadline(h) {
     setHeadlines((prev) => [h, ...prev].slice(0, 12));
   }
 
   function openWS(sid) {
     if (wsRef.current) try { wsRef.current.close(); } catch {}
-    const ws = new WebSocket(`ws://localhost:8000/ws/sessions/${sid}`);
+    const ws = new WebSocket(`ws://localhost:8001/ws/sessions/${sid}`);
     wsRef.current = ws;
     ws.onopen = () => setStatus(`Session ${sid} | WS connected`);
     ws.onmessage = (evt) => {
@@ -400,8 +425,10 @@ export default function App() {
     setSelectedGameMode(mode);
     setShowMainMenu(false);
     
-    if (mode === 'observe_the_end') {
-      createObserveSimulation();
+    if (mode === 'psychohistory') {
+      // Don't auto-create simulation - wait for user to select date and click start
+      setPsychohistoryStatus('idle');
+      setStatus("🧠 Psychohistory mode selected - Choose a date and click Start Simulation");
     } else if (mode === 'single_player' || mode === 'multiplayer') {
       setShowCountrySelection(true);
       setGameMode(mode); // Set the game mode immediately when selected from main menu
@@ -420,30 +447,19 @@ export default function App() {
       const costResponse = await fetch(`${API}/costs`);
       const costData = await costResponse.json();
       
-      const servicesAvailable = healthData.services?.chatgpt_service && healthData.services?.realtime_service;
+      const servicesAvailable = healthData.chatgpt_available && healthData.world_data_available;
       
       setServicesStatus({
-        chatgpt: healthData.services?.chatgpt_service || false,
-        news: healthData.services?.realtime_service || false,
+        chatgpt: healthData.chatgpt_available || false,
+        news: healthData.world_data_available || false,
         loading: false
       });
       
       setCostInfo(costData);
       
       if (servicesAvailable && healthData.mode === "enhanced") {
-        await fetchRecentNews();
-        await fetchAiAnalysis();
         await fetchPlayableCountries();
       } else {
-        setRecentNews([
-          { title: "Global tensions rise in Eastern Europe", source: "Demo News", published_at: new Date().toISOString() },
-          { title: "Economic sanctions impact global markets", source: "Demo News", published_at: new Date().toISOString() },
-          { title: "Diplomatic talks continue in Geneva", source: "Demo News", published_at: new Date().toISOString() }
-        ]);
-        setAiAnalysis([
-          { type: "diplomatic", title: "AI Analysis: Regional tensions escalating", description: "Analysis suggests increased military activity in the region", timestamp: new Date().toISOString() },
-          { type: "economic", title: "AI Analysis: Economic indicators shifting", description: "Market analysis predicts currency fluctuations", timestamp: new Date().toISOString() }
-        ]);
         setPlayableCountries(["US", "CN", "RU", "EU", "IN", "IR", "IL", "KP"]);
       }
     } catch (error) {
@@ -453,59 +469,10 @@ export default function App() {
         news: false,
         loading: false
       });
-      setRecentNews([
-        { title: "Global tensions rise in Eastern Europe", source: "Demo News", published_at: new Date().toISOString() },
-        { title: "Economic sanctions impact global markets", source: "Demo News", published_at: new Date().toISOString() },
-        { title: "Diplomatic talks continue in Geneva", source: "Demo News", published_at: new Date().toISOString() }
-      ]);
-      setAiAnalysis([
-        { type: "diplomatic", title: "AI Analysis: Regional tensions escalating", description: "Analysis suggests increased military activity in the region", timestamp: new Date().toISOString() },
-        { type: "economic", title: "AI Analysis: Economic indicators shifting", description: "Market analysis predicts currency fluctuations", timestamp: new Date().toISOString() }
-      ]);
       setPlayableCountries(["US", "CN", "RU", "EU", "IN", "IR", "IL", "KP"]);
     }
   };
 
-  const fetchRecentNews = async () => {
-    try {
-      const sessionResponse = await fetch(`${API}/sessions`, { method: "POST" });
-      const sessionData = await sessionResponse.json();
-      const sessionId = sessionData.session_id;
-      
-      const response = await fetch(`${API}/sessions/${sessionId}/news?limit=3`);
-      const data = await response.json();
-      if (data.headlines) {
-        setRecentNews(data.headlines);
-      }
-    } catch (error) {
-      console.error("Error fetching news:", error);
-      setRecentNews([
-        { title: "Global tensions rise in Eastern Europe", source: "Demo News", published_at: new Date().toISOString() },
-        { title: "Economic sanctions impact global markets", source: "Demo News", published_at: new Date().toISOString() },
-        { title: "Diplomatic talks continue in Geneva", source: "Demo News", published_at: new Date().toISOString() }
-      ]);
-    }
-  };
-
-  const fetchAiAnalysis = async () => {
-    try {
-      const sessionResponse = await fetch(`${API}/sessions`, { method: "POST" });
-      const sessionData = await sessionResponse.json();
-      const sessionId = sessionData.session_id;
-      
-      const response = await fetch(`${API}/sessions/${sessionId}/events?limit=2`);
-      const data = await response.json();
-      if (data.events) {
-        setAiAnalysis(data.events);
-      }
-    } catch (error) {
-      console.error("Error fetching AI analysis:", error);
-      setAiAnalysis([
-        { type: "diplomatic", title: "AI Analysis: Regional tensions escalating", description: "Analysis suggests increased military activity in the region", timestamp: new Date().toISOString() },
-        { type: "economic", title: "AI Analysis: Economic indicators shifting", description: "Market analysis predicts currency fluctuations", timestamp: new Date().toISOString() }
-      ]);
-    }
-  };
 
   const fetchPlayableCountries = async () => {
     try {
@@ -691,7 +658,7 @@ export default function App() {
 
   const startRoundBasedGame = async () => {
     await createGameSession(gameMode, selectedPlayableCountry.country_id);
-    setShowCountrySelection(false);
+      setShowCountrySelection(false);
   };
 
   const startGameStatusPolling = (sessionId) => {
@@ -752,92 +719,119 @@ export default function App() {
     return `${minutes}:${remainingSeconds.toString().padStart(2, '0')}`;
   };
 
-  const createObserveSimulation = async () => {
+
+
+  const createPsychohistorySimulation = async () => {
     try {
-      const response = await fetch(`${API}/observe-the-end/create`, {
-        method: "POST"
+      setPsychohistoryStatus('creating');
+      setNewsLoading(true);
+      setStatus("🧠 Creating World Brain simulation...");
+      
+      const response = await fetch(`${API}/worldbrain/create`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          seed: Math.floor(Math.random() * 1000000),
+          start_month: selectedStartDate.month,
+          start_year: selectedStartDate.year,
+          use_present: selectedStartDate.usePresent
+        })
       });
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+
+      if (response.ok) {
+        const data = await response.json();
+        setPsychohistorySimulation(data);
+        setPsychohistoryMapState(data.map_state);
+        setPsychohistoryNews(data.news || []);
+        setPsychohistoryTick(1);
+        setPsychohistoryStatus('running');
+        setNewsLoading(false);
+        
+        const dateStr = selectedStartDate.usePresent ? "Present" : `${selectedStartDate.month}/${selectedStartDate.year}`;
+        setStatus(`🧠 World Brain simulation started: ${dateStr}`);
+        
+        // Start automatic ticking
+        startPsychohistoryTicking(data.id);
+      } else {
+        console.error('Failed to create psychohistory simulation');
+        setPsychohistoryStatus('error');
+        setNewsLoading(false);
+        setStatus("❌ Failed to start World Brain simulation");
       }
-      
-      const data = await response.json();
-      setObserveSimulation(data);
-      setStatus(`🔮 Predictive simulation started: ${data.simulation_id}`);
-      
-      setTimeout(() => fetchTimelineEvents(data.simulation_id), 2000);
-      
     } catch (error) {
-      console.error("Error creating observe simulation:", error);
-      setStatus("❌ Failed to start predictive simulation");
+      console.error('Error creating psychohistory simulation:', error);
+      setPsychohistoryStatus('error');
+      setNewsLoading(false);
+      setStatus("❌ Failed to start World Brain simulation");
     }
   };
 
-  const fetchTimelineEvents = async (simulationId) => {
+  const startPsychohistoryTicking = async (simulationId) => {
+    // Don't auto-tick - let user control the pace
+    setPsychohistoryStatus('ready');
+    setStatus("🧠 World Brain ready - Use arrow keys to advance weeks");
+  };
+
+  const advancePsychohistoryWeek = async () => {
+    if (!psychohistorySimulation || psychohistoryStatus !== 'ready') return;
+    
     try {
-      const response = await fetch(`${API}/observe-the-end/${simulationId}/timeline`);
+      setPsychohistoryStatus('processing');
+      setStatus("🧠 Processing next week...");
       
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      const response = await fetch(`${API}/worldbrain/${psychohistorySimulation.id}/tick`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setPsychohistoryNews(prev => [...prev, ...data.news]);
+        setPsychohistoryMapState(data.map_state);
+        setPsychohistoryTick(prev => prev + 1);
+        
+        // Update the simulation object with new date
+        setPsychohistorySimulation(prev => ({
+          ...prev,
+          current_date: data.current_date
+        }));
+        
+        // Update status with current world state
+        const tension = data.map_state.global_tension || 0;
+        const activeConflicts = data.map_state.active_conflicts?.length || 0;
+        
+        const currentDate = data.current_date || "Current Date";
+        setStatus(`🧠 ${currentDate} - Global Tension: ${tension}% | Active Conflicts: ${activeConflicts}`);
+        
+        setPsychohistoryStatus('ready');
+      } else {
+        console.error('Failed to tick psychohistory simulation');
+        setPsychohistoryStatus('error');
+        setStatus("❌ World Brain simulation error");
       }
-      
-      const data = await response.json();
-      setTimelineEvents(data.events);
-      
-      if (data.events.length > 0) {
-        setTimelineScrubberVisible(true);
-        setCurrentTimelineDate(data.events[0].date);
-        await fetchWorldStateAtDate(simulationId, data.events[0].date);
-      }
-      
     } catch (error) {
-      console.error("Error fetching timeline:", error);
-      if (observeSimulation && observeSimulation.status === "running") {
-        setTimeout(() => fetchTimelineEvents(simulationId), 5000);
-      }
+      console.error('Error ticking psychohistory simulation:', error);
+      setPsychohistoryStatus('error');
+      setStatus("❌ World Brain simulation error");
     }
   };
 
-  const fetchWorldStateAtDate = async (simulationId, date) => {
-    try {
-      const response = await fetch(`${API}/observe-the-end/${simulationId}/world-state/${date}`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      setWorldStateAtDate(data);
-      
-    } catch (error) {
-      console.error("Error fetching world state:", error);
-    }
-  };
 
-  const handleTimelineScrub = async (date) => {
-    setCurrentTimelineDate(date);
-    if (observeSimulation) {
-      await fetchWorldStateAtDate(observeSimulation.simulation_id, date);
-    }
-  };
-
-  const formatTimelineDate = (dateString) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-US', { 
-      year: 'numeric', 
-      month: 'short', 
-      day: 'numeric' 
-    });
-  };
 
   const returnToMainMenu = () => {
     setSelectedGameMode(null);
     setShowMainMenu(true);
     setShowCountrySelection(false);
     setCurrentGameSession(null);
-    setObserveSimulation(null);
-    setTimelineScrubberVisible(false);
+    setPsychohistorySimulation(null);
+    setPsychohistoryNews([]);
+    setPsychohistoryMapState(null);
+    setPsychohistoryTick(0);
+    setPsychohistoryStatus('idle');
     setStatus("Ready to select your game mode");
   };
 
@@ -846,24 +840,24 @@ export default function App() {
       {/* Map Container - Always visible */}
       <div style={{ flex: 1, position: 'relative' }}>
         <div id="map" style={{ position: "absolute", inset: 0 }} />
-        
+      
         {/* Main Menu Overlay - Only when showMainMenu is true */}
         {showMainMenu && (
-          <div style={{
+        <div style={{
             position: 'absolute',
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
+          top: 0,
+          left: 0,
+          right: 0,
+          bottom: 0,
             background: 'rgba(15, 23, 42, 0.85)',
             backdropFilter: 'blur(8px)',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'center',
-            alignItems: 'center',
+          display: 'flex',
+          flexDirection: 'column',
+          justifyContent: 'center',
+          alignItems: 'center',
             zIndex: 1000,
-            padding: '20px'
-          }}>
+          padding: '20px'
+        }}>
           <div style={{
             textAlign: 'center',
             marginBottom: '60px'
@@ -897,6 +891,56 @@ export default function App() {
             maxWidth: '1000px',
             width: '100%'
           }}>
+            <div 
+              onClick={() => selectGameMode('psychohistory')}
+              style={{
+                background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
+                border: '2px solid #f59e0b',
+                borderRadius: '16px',
+                padding: '30px',
+                cursor: 'pointer',
+                transition: 'all 0.3s ease',
+                boxShadow: '0 8px 32px rgba(245, 158, 11, 0.2)',
+                position: 'relative',
+                overflow: 'hidden'
+              }}
+              onMouseEnter={(e) => {
+                e.target.style.transform = 'translateY(-8px)';
+                e.target.style.boxShadow = '0 16px 48px rgba(245, 158, 11, 0.3)';
+              }}
+              onMouseLeave={(e) => {
+                e.target.style.transform = 'translateY(0)';
+                e.target.style.boxShadow = '0 8px 32px rgba(245, 158, 11, 0.2)';
+              }}
+            >
+              <div style={{ fontSize: '3rem', marginBottom: '20px' }}>🧠</div>
+              <h2 style={{
+                fontSize: '1.8rem',
+                fontWeight: 'bold',
+                color: '#f8fafc',
+                margin: '0 0 15px 0'
+              }}>
+                Psychohistory
+              </h2>
+              <p style={{
+                color: '#cbd5e1',
+                lineHeight: '1.6',
+                margin: '0 0 20px 0'
+              }}>
+                The World Brain - Automated predictive simulation using real news, historical patterns, and AI analysis. 
+                Watch as the simulation unfolds without player interference.
+              </p>
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                color: '#fbbf24',
+                fontSize: '0.9rem',
+                fontWeight: '500'
+              }}>
+                <span>Witness the World Brain →</span>
+              </div>
+            </div>
+
             <div 
               onClick={() => selectGameMode('single_player')}
               style={{
@@ -997,55 +1041,7 @@ export default function App() {
               </div>
             </div>
 
-            <div 
-              onClick={() => selectGameMode('observe_the_end')}
-              style={{
-                background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
-                border: '2px solid #8b5cf6',
-                borderRadius: '16px',
-                padding: '30px',
-                cursor: 'pointer',
-                transition: 'all 0.3s ease',
-                boxShadow: '0 8px 32px rgba(139, 92, 246, 0.2)',
-                position: 'relative',
-                overflow: 'hidden'
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.transform = 'translateY(-8px)';
-                e.target.style.boxShadow = '0 16px 48px rgba(139, 92, 246, 0.3)';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.transform = 'translateY(0)';
-                e.target.style.boxShadow = '0 8px 32px rgba(139, 92, 246, 0.2)';
-              }}
-            >
-              <div style={{ fontSize: '3rem', marginBottom: '20px' }}>🔮</div>
-              <h2 style={{
-                fontSize: '1.8rem',
-                fontWeight: 'bold',
-                color: '#f8fafc',
-                margin: '0 0 15px 0'
-              }}>
-                Observe the End
-              </h2>
-              <p style={{
-                color: '#cbd5e1',
-                lineHeight: '1.6',
-                margin: '0 0 20px 0'
-              }}>
-                Watch AI-powered predictive simulation of WWIII. 
-                Based on real-world data, historical patterns, and 40+ hours of Predictive History analysis.
-              </p>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                color: '#a78bfa',
-                fontSize: '0.9rem',
-                fontWeight: '500'
-              }}>
-                <span>Witness the future →</span>
-              </div>
-            </div>
+
           </div>
 
           <div style={{
@@ -1056,12 +1052,12 @@ export default function App() {
           }}>
             <p>Powered by Predictive History, ChatGPT AI, and Real-time Geopolitical Analysis</p>
           </div>
-          </div>
+        </div>
         )}
         
         {/* Game Interface - Always visible when not in main menu */}
         {!showMainMenu && (
-          <>
+        <>
             <button
               onClick={returnToMainMenu}
               style={{
@@ -1160,49 +1156,6 @@ export default function App() {
                 </div>
               )}
 
-              {recentNews.length > 0 && (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 8 }}>📰 Recent News:</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {recentNews.map((news, index) => (
-                      <div key={index} style={{ 
-                        padding: 8, 
-                        background: "#111", 
-                        borderRadius: 6,
-                        fontSize: 12 
-                      }}>
-                        <div style={{ fontWeight: 500, marginBottom: 4 }}>{news.title}</div>
-                        <div style={{ color: "#ccc", fontSize: 11 }}>{news.summary}</div>
-                        <div style={{ color: "#aaa", fontSize: 10, marginTop: 4 }}>
-                          Source: {news.source} • {new Date(news.timestamp).toLocaleTimeString()}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-
-              {aiAnalysis && aiAnalysis.length > 0 && (
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 8 }}>🤖 AI Analysis:</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {aiAnalysis.map((event, index) => (
-                      <div key={index} style={{ 
-                        padding: 8, 
-                        background: "#111", 
-                        borderRadius: 6,
-                        fontSize: 12 
-                      }}>
-                        <div style={{ fontWeight: 500, marginBottom: 4 }}>{event.title}</div>
-                        <div style={{ color: "#ccc", fontSize: 11 }}>{event.description}</div>
-                        <div style={{ color: "#aaa", fontSize: 10, marginTop: 4 }}>
-                          {new Date(event.timestamp).toLocaleTimeString()}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
 
               <button 
                 onClick={checkServicesStatus}
@@ -1365,146 +1318,346 @@ export default function App() {
               </div>
             )}
 
-            {observeSimulation && (
+            {selectedGameMode === 'psychohistory' && (
               <div style={{
                 position: "absolute",
                 right: 12,
                 top: 12,
-                width: 400,
+                width: 450,
                 background: "#000",
                 color: "#fff",
                 padding: 16,
                 borderRadius: 12,
                 boxShadow: "0 8px 20px rgba(0,0,0,.15)",
-                border: "2px solid #8b5cf6",
+                border: "2px solid #f59e0b",
                 maxHeight: "80vh",
                 overflowY: "auto"
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <h3 style={{ margin: 0, fontSize: 18 }}>🔮 Observe the End</h3>
+                  <h3 style={{ margin: 0, fontSize: 18 }}>🧠 Psychohistory</h3>
                   <div style={{ fontSize: 12, color: "#999" }}>
-                    Predictive Simulation
+                    World Brain Simulation
                   </div>
                 </div>
                 
                 <div style={{ marginBottom: 16 }}>
                   <div style={{ fontSize: 14, color: "#ccc", marginBottom: 8 }}>
-                    Simulation ID: {observeSimulation.simulation_id?.slice(0, 8)}...
+                    🗓️ Start Date
                   </div>
-                  <div style={{ fontSize: 12, color: "#999" }}>
-                    Status: {observeSimulation.status || "Running"}
-                  </div>
+                  
+                  {/* Use Present Date Checkbox */}
+                  <label style={{ 
+                    display: "flex", 
+                    alignItems: "center", 
+                    marginBottom: 12, 
+                    cursor: "pointer",
+                    fontSize: 12,
+                    color: "#ccc",
+                    gap: 8
+                  }}>
+                    <input
+                      type="checkbox"
+                      checked={selectedStartDate.usePresent}
+                      onChange={(e) => {
+                        if (e.target.checked) {
+                          const today = new Date();
+                          setSelectedStartDate({
+                            month: today.getMonth() + 1,
+                            year: today.getFullYear(),
+                            usePresent: true
+                          });
+                        } else {
+                          setSelectedStartDate(prev => ({ ...prev, usePresent: false }));
+                        }
+                      }}
+                      style={{
+                        accentColor: "#f59e0b",
+                        transform: "scale(1.2)"
+                      }}
+                    />
+                    🔄 Use Present Date (World Brain)
+                  </label>
+                  
+                  {/* Historical Date Selection */}
+                  {!selectedStartDate.usePresent && (
+                    <div style={{ marginBottom: 12 }}>
+                      <div style={{ fontSize: 12, color: "#999", marginBottom: 8 }}>
+                        Select historical date for news simulation:
+                      </div>
+                      <div style={{ display: "flex", gap: 8 }}>
+                        <select 
+                          value={selectedStartDate.month}
+                          onChange={(e) => setSelectedStartDate(prev => ({ ...prev, month: parseInt(e.target.value) }))}
+                          style={{
+                            background: "#374151",
+                            color: "#fff",
+                            border: "1px solid #4b5563",
+                            borderRadius: 4,
+                            padding: "6px 8px",
+                            fontSize: 12,
+                            flex: 1
+                          }}
+                        >
+                          {Array.from({length: 12}, (_, i) => i + 1).map(month => (
+                            <option key={month} value={month}>
+                              {new Date(2000, month-1).toLocaleString('default', { month: 'long' })}
+                            </option>
+                          ))}
+                        </select>
+                        
+                        <select 
+                          value={selectedStartDate.year}
+                          onChange={(e) => setSelectedStartDate(prev => ({ ...prev, year: parseInt(e.target.value) }))}
+                          style={{
+                            background: "#374151",
+                            color: "#fff",
+                            border: "1px solid #4b5563",
+                            borderRadius: 4,
+                            padding: "6px 8px",
+                            fontSize: 12,
+                            flex: 1
+                          }}
+                        >
+                          {Array.from({length: new Date().getFullYear() - 1900 + 1}, (_, i) => new Date().getFullYear() - i).map(year => (
+                            <option key={year} value={year}>
+                              {year}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+                  )}
+
+                  {!psychohistorySimulation ? (
+                    <button
+                      onClick={createPsychohistorySimulation}
+                      disabled={psychohistoryStatus === 'creating'}
+                      style={{
+                        background: psychohistoryStatus === 'creating' ? "#6b7280" : "#f59e0b",
+                        color: psychohistoryStatus === 'creating' ? "#ccc" : "#000",
+                        border: "none",
+                        padding: "10px 16px",
+                        borderRadius: 6,
+                        cursor: psychohistoryStatus === 'creating' ? "not-allowed" : "pointer",
+                        fontSize: 12,
+                        fontWeight: 600,
+                        width: "100%",
+                        marginBottom: 12
+                      }}
+                    >
+                      {psychohistoryStatus === 'creating' ? "🔄 Creating..." : "🚀 Start Simulation"}
+                    </button>
+                  ) : (
+                    <>
+                      <div style={{ fontSize: 14, color: "#ccc", marginBottom: 8 }}>
+                        Simulation ID: {psychohistorySimulation.id?.slice(0, 8)}...
+                      </div>
+                      <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>
+                        Status: {psychohistoryStatus}
+                      </div>
+                      <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>
+                        Week: {psychohistoryTick}
+                      </div>
+                      {psychohistorySimulation.current_date && (
+                        <div style={{ fontSize: 11, color: "#888" }}>
+                          Date: {new Date(psychohistorySimulation.current_date).toLocaleDateString('en-US', { 
+                            year: 'numeric', 
+                            month: 'short', 
+                            day: 'numeric' 
+                          })}
+                        </div>
+                      )}
+                    </>
+                  )}
                 </div>
                 
-                {timelineEvents.length > 0 && (
+                {/* Controls */}
+                {psychohistorySimulation && (
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ fontSize: 14, color: "#ccc", marginBottom: 8 }}>
-                      📅 Timeline Events ({timelineEvents.length})
+                      🎮 Controls
                     </div>
-                    <div style={{ maxHeight: "200px", overflowY: "auto" }}>
-                      {timelineEvents.slice(0, 5).map((event, index) => (
+                    <div style={{ fontSize: 11, color: "#999", marginBottom: 8 }}>
+                      Press → or SPACE to advance one week
+                    </div>
+                    <button
+                      onClick={advancePsychohistoryWeek}
+                      disabled={psychohistoryStatus !== 'ready'}
+                      style={{
+                        background: psychohistoryStatus === 'ready' ? '#f59e0b' : '#666',
+                        color: '#000',
+                        border: 'none',
+                        padding: '8px 16px',
+                        borderRadius: '6px',
+                        cursor: psychohistoryStatus === 'ready' ? 'pointer' : 'not-allowed',
+                        fontSize: '12px',
+                        fontWeight: '600',
+                        width: '100%'
+                      }}
+                    >
+                      {psychohistoryStatus === 'ready' ? '⏭️ Advance Week' : 
+                       psychohistoryStatus === 'processing' ? '⏳ Processing...' : 
+                       psychohistoryStatus === 'completed' ? '✅ Completed' : '❌ Error'}
+                    </button>
+                  </div>
+                )}
+
+
+
+                {/* Latest News */}
+                <div style={{ marginBottom: 16 }}>
+                  <div style={{ fontSize: 14, color: "#ccc", marginBottom: 8 }}>
+                    📰 Latest News {psychohistoryNews.length > 0 && `(${psychohistoryNews.length})`}
+                  </div>
+                  {newsLoading ? (
+                    <div style={{ 
+                      padding: 10,
+                      background: "#1f2937",
+                      borderRadius: 8,
+                      marginBottom: 8,
+                      fontSize: 11,
+                      borderLeft: "3px solid #f59e0b",
+                      textAlign: "center",
+                      color: "#999"
+                    }}>
+                      ⏳ Loading news articles...
+                    </div>
+                  ) : psychohistoryNews.length > 0 ? (
+                    <div style={{ maxHeight: "300px", overflowY: "auto" }}>
+                      {psychohistoryNews.slice(-5).map((article, index) => (
                         <div key={index} style={{
-                          padding: 8,
+                          padding: 10,
                           background: "#1f2937",
-                          borderRadius: 6,
-                          marginBottom: 6,
-                          fontSize: 11
+                          borderRadius: 8,
+                          marginBottom: 8,
+                          fontSize: 11,
+                          borderLeft: "3px solid #f59e0b",
+                          cursor: "pointer",
+                          transition: "all 0.2s ease"
+                        }}
+                        onMouseEnter={(e) => e.target.style.background = "#374151"}
+                        onMouseLeave={(e) => e.target.style.background = "#1f2937"}
+                        onClick={() => {
+                          // Show full article in a modal or expand
+                          const statChanges = article.stat_changes ? `\n\nStat Changes: ${JSON.stringify(article.stat_changes, null, 2)}` : '';
+                          alert(`${article.title}\n\n${article.content}\n\nSource: ${article.source}\nReliability: ${article.reliability}${statChanges}`);
                         }}>
-                          <div style={{ fontWeight: 600, color: "#fbbf24", marginBottom: 2 }}>
-                            {formatTimelineDate(event.date)}
+                          <div style={{ fontWeight: 600, color: "#fbbf24", marginBottom: 4, fontSize: 12 }}>
+                            {article.title}
                           </div>
-                          <div style={{ color: "#ccc", marginBottom: 2 }}>
-                            {event.title}
+                          <div style={{ color: "#ccc", marginBottom: 4, fontSize: 10, lineHeight: 1.3 }}>
+                            {article.content.length > 120 ? article.content.substring(0, 120) + "..." : article.content}
                           </div>
-                          <div style={{ fontSize: 10, color: "#999" }}>
-                            Impact: {Math.round(event.impact_magnitude * 100)}% | 
-                            Pattern: {event.historical_pattern?.replace('_', ' ')}
+                          <div style={{ fontSize: 9, color: "#999", display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <span>{new Date(article.timestamp).toLocaleDateString()}</span>
+                            <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+                              <span style={{ 
+                                background: article.category === 'diplomatic' ? '#3b82f6' : 
+                                          article.category === 'military' ? '#ef4444' : 
+                                          article.category === 'economic' ? '#10b981' : 
+                                          article.category === 'cyber' ? '#8b5cf6' : '#6b7280',
+                                padding: '2px 6px',
+                                borderRadius: '4px',
+                                fontSize: 8,
+                                fontWeight: '600'
+                              }}>
+                                {article.category}
+                              </span>
+                              <span style={{ 
+                                background: article.severity === 'high' ? '#ef4444' : article.severity === 'medium' ? '#f59e0b' : '#10b981',
+                                padding: '1px 4px',
+                                borderRadius: '3px',
+                                fontSize: 7
+                              }}>
+                                {article.severity.toUpperCase()}
+                              </span>
+                            </div>
+                          </div>
+                          <div style={{ fontSize: 8, color: "#666", marginTop: 4, fontStyle: 'italic' }}>
+                            Click to read full article • Source: {article.source}
                           </div>
                         </div>
                       ))}
                     </div>
-                  </div>
-                )}
-                
-                {worldStateAtDate && (
+                  ) : !psychohistorySimulation ? (
+                    <div style={{ 
+                      padding: 10,
+                      background: "#1f2937",
+                      borderRadius: 8,
+                      marginBottom: 8,
+                      fontSize: 11,
+                      borderLeft: "3px solid #f59e0b",
+                      textAlign: "center",
+                      color: "#999"
+                    }}>
+                      Select a start date and click "Start Simulation" to begin
+                    </div>
+                  ) : (
+                    <div style={{ 
+                      padding: 10,
+                      background: "#1f2937",
+                      borderRadius: 8,
+                      marginBottom: 8,
+                      fontSize: 11,
+                      borderLeft: "3px solid #10b981",
+                      textAlign: "center",
+                      color: "#999"
+                    }}>
+                      No news articles generated yet. Use controls to advance the simulation.
+                    </div>
+                  )}
+                </div>
+
+                {/* World State Summary */}
+                {psychohistoryMapState && psychohistoryMapState.countries && (
                   <div style={{ marginBottom: 16 }}>
                     <div style={{ fontSize: 14, color: "#ccc", marginBottom: 8 }}>
-                      🌍 World State: {formatTimelineDate(worldStateAtDate.date)}
+                      🌍 World Summary
                     </div>
                     <div style={{ fontSize: 11, color: "#ccc" }}>
-                      <div style={{ marginBottom: 4 }}>
-                        Stability: {Math.round(worldStateAtDate.world_stability_index * 100)}%
+                      <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Total Countries:</span>
+                        <span style={{ color: '#10b981' }}>
+                          {Object.keys(psychohistoryMapState.countries).length}
+                        </span>
                       </div>
-                      <div style={{ marginBottom: 4 }}>
-                        Nuclear Threat: {Math.round(worldStateAtDate.nuclear_threat_level * 100)}%
+                      <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Western Bloc:</span>
+                        <span style={{ color: '#3b82f6' }}>
+                          {Object.values(psychohistoryMapState.countries).filter(c => c.bloc === 'Western').length}
+                        </span>
                       </div>
-                      <div style={{ marginBottom: 4 }}>
-                        Active Conflicts: {worldStateAtDate.conflicts?.length || 0}
+                      <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Eastern Bloc:</span>
+                        <span style={{ color: '#ef4444' }}>
+                          {Object.values(psychohistoryMapState.countries).filter(c => c.bloc === 'Eastern').length}
+                        </span>
                       </div>
-                      <div>
-                        GDP Growth: {((worldStateAtDate.economic_indicators?.global_gdp_growth || 0) * 100).toFixed(1)}%
+                      <div style={{ marginBottom: 4, display: 'flex', justifyContent: 'space-between' }}>
+                        <span>Non-Aligned:</span>
+                        <span style={{ color: '#f59e0b' }}>
+                          {Object.values(psychohistoryMapState.countries).filter(c => c.bloc === 'Non-Aligned').length}
+                        </span>
                       </div>
                     </div>
                   </div>
                 )}
                 
-                {timelineScrubberVisible && timelineEvents.length > 0 && (
-                  <div style={{ marginBottom: 16 }}>
-                    <div style={{ fontSize: 14, color: "#ccc", marginBottom: 8 }}>
-                      ⏰ Timeline Scrubber
-                    </div>
-                    <input
-                      type="range"
-                      min="0"
-                      max={timelineEvents.length - 1}
-                      value={timelineEvents.findIndex(e => e.date === currentTimelineDate) || 0}
-                      onChange={(e) => {
-                        const event = timelineEvents[parseInt(e.target.value)];
-                        if (event) {
-                          handleTimelineScrub(event.date);
-                        }
-                      }}
-                      style={{
-                        width: "100%",
-                        marginBottom: 8
-                      }}
-                    />
-                    <div style={{ fontSize: 11, color: "#999", textAlign: "center" }}>
-                      {currentTimelineDate ? formatTimelineDate(currentTimelineDate) : "Select date"}
-                    </div>
-                  </div>
-                )}
                 
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 14, color: "#ccc", marginBottom: 8 }}>
-                    📚 Active Patterns
-                  </div>
-                  <div style={{ fontSize: 11, color: "#ccc" }}>
-                    <div style={{ marginBottom: 2 }}>• Roman Decline Pattern</div>
-                    <div style={{ marginBottom: 2 }}>• Cold War Escalation</div>
-                    <div style={{ marginBottom: 2 }}>• Persian Expansion</div>
-                    <div>• Byzantine Diplomacy</div>
-                  </div>
-                </div>
-                
-                <div style={{ marginBottom: 16 }}>
-                  <div style={{ fontSize: 14, color: "#ccc", marginBottom: 8 }}>
-                    🤖 AI Analysis
-                  </div>
-                  <div style={{ fontSize: 11, color: "#ccc" }}>
+                {/* Instructions */}
+                <div style={{ fontSize: 11, color: "#666", lineHeight: 1.4 }}>
                     <div style={{ marginBottom: 4 }}>
-                      Based on 40+ hours of Predictive History transcripts
-                    </div>
-                    <div style={{ marginBottom: 4 }}>
-                      Real-time geopolitical analysis
-                    </div>
-                    <div>
-                      Historical pattern recognition
-                    </div>
+                    🧠 Watch the World Brain make decisions based on:
                   </div>
+                  <div style={{ marginBottom: 2 }}>• Real-time news analysis</div>
+                  <div style={{ marginBottom: 2 }}>• Historical patterns</div>
+                  <div style={{ marginBottom: 2 }}>• Country doctrines & objectives</div>
+                  <div>• Sociological factors</div>
                 </div>
               </div>
             )}
+                
+
 
             <div
               id="ticker"
@@ -1756,13 +1909,13 @@ export default function App() {
                         </table>
                       </div>
                     </div>
-                                     )}
-                 </div>
-               </div>
-             )}
-           </>
-         )}
+                  )}
+                </div>
+              </div>
+            )}
+        </>
+      )}
        </div>
-     </div>
-   );
- }
+    </div>
+  );
+}

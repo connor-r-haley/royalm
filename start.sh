@@ -2,30 +2,40 @@
 
 echo "🚀 Starting WWIII Simulator..."
 
-# Start backend in background
+# Get absolute paths
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+BACKEND_DIR="$ROOT_DIR/backend"
+FRONTEND_DIR="$ROOT_DIR/frontend"
+VENV_DIR="$ROOT_DIR/venv"
+
+# Start backend
+cd "$BACKEND_DIR"
+source "$VENV_DIR/bin/activate"
 echo "📡 Starting backend server..."
-cd backend
-source ../venv/bin/activate
-python -m uvicorn main:app --reload --port 8000 &
+python -m uvicorn main:app --reload --port 8001 &
 BACKEND_PID=$!
-cd ..
 
-# Wait a moment for backend to start
-sleep 2
-
-# Start frontend in background
+# Start frontend
+cd "$FRONTEND_DIR"
 echo "🌐 Starting frontend server..."
-cd frontend
 npm run dev &
 FRONTEND_PID=$!
-cd ..
 
-echo "✅ Both servers started!"
-echo "📡 Backend: http://localhost:8000"
-echo "🌐 Frontend: http://localhost:5173"
+echo "✅ Servers started in background!"
+echo "📡 Backend running on: http://localhost:8001"
+echo "🌐 Frontend running on: http://localhost:5173"
 echo ""
 echo "Press Ctrl+C to stop both servers"
 
-# Wait for user to stop
-trap "echo '🛑 Stopping servers...'; kill $BACKEND_PID $FRONTEND_PID; exit" INT
-wait 
+# Handle cleanup on script exit
+cleanup() {
+    echo "Stopping servers..."
+    kill $BACKEND_PID 2>/dev/null
+    kill $FRONTEND_PID 2>/dev/null
+    exit 0
+}
+
+trap cleanup SIGINT SIGTERM
+
+# Wait for either process to exit
+wait
