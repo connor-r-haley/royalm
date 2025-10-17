@@ -3,7 +3,7 @@ import maplibregl from "maplibre-gl";
 import "maplibre-gl/dist/maplibre-gl.css";
 import BorderManager from "./borderManager";
 
-const API = "http://localhost:8001";
+const API = "http://localhost:8000";
 const MAPTILER_KEY = "A4684uteIMrjertm4Tjw";
 const STYLES = {
   Main:        `https://api.maptiler.com/maps/landscape/style.json?key=${MAPTILER_KEY}`,
@@ -56,6 +56,8 @@ export default function App() {
   const [psychohistoryStatus, setPsychohistoryStatus] = useState('idle');
   const [selectedGameMode, setSelectedGameMode] = useState(null);
   const [showMainMenu, setShowMainMenu] = useState(true);
+  const [showServiceStatus, setShowServiceStatus] = useState(false);
+  const [activeSettingsTab, setActiveSettingsTab] = useState('api'); // 'api', 'map', 'about'
   const [newsLoading, setNewsLoading] = useState(false);
   const [selectedStartDate, setSelectedStartDate] = useState(() => {
     const today = new Date();
@@ -65,6 +67,238 @@ export default function App() {
       usePresent: true
     };
   });
+
+  // Settings dropdown + floating panels (API, Map, About, Databases)
+  const [showSettingsMenu, setShowSettingsMenu] = useState(false);
+  const settingsMenuRef = useRef(null);
+  const settingsButtonRef = useRef(null);
+  const [settingsMenuPos, setSettingsMenuPos] = useState({ top: 56, right: 20 });
+
+  const [panelVisible, setPanelVisible] = useState({ api: false, map: false, about: false, country: false });
+  const [panelPos, setPanelPos] = useState({
+    api: { x: typeof window !== 'undefined' ? window.innerWidth - 460 : 800, y: 90 },
+    map: { x: typeof window !== 'undefined' ? window.innerWidth - 500 : 760, y: 140 },
+    about: { x: typeof window !== 'undefined' ? window.innerWidth - 420 : 820, y: 190 },
+    country: { x: typeof window !== 'undefined' ? window.innerWidth - 540 : 700, y: 90 }
+  });
+  const draggingRef = useRef(null);
+
+  // Country data table helpers
+  const [forgeQuery, setForgeQuery] = useState('');
+  const [forgeSortBy, setForgeSortBy] = useState({ key: 'name', dir: 'asc' });
+  // Databases panel tabs: countries | leaders
+  const [databasesTab, setDatabasesTab] = useState('countries');
+  const [leadersRows, setLeadersRows] = useState([]);
+
+  function getCountryRows() {
+    if (!psychohistoryMapState || !psychohistoryMapState.country_states) return [];
+    const entries = Object.entries(psychohistoryMapState.country_states).map(([id, state]) => ({ id, ...state }));
+    const rows = entries.map(c => ({
+      id: c.id,
+      name: c.name || c.id,
+      allegiance: c.allegiance || c.faction || c.bloc || 'Unknown',
+      gdp: c.gdp || c.economic || c.gdp_billion || 0,
+      nukes: c.nuclear_warheads || c.nukes || 0,
+      population: c.population || 0,
+      military_budget: c.military_budget || 0,
+      regime_type: c.regime_type || 'Unknown',
+      morale: typeof c.morale === 'number' ? c.morale : 0
+    }));
+    let filtered = rows;
+    if (forgeQuery) {
+      const q = forgeQuery.toLowerCase();
+      filtered = rows.filter(r => Object.values(r).some(v => String(v).toLowerCase().includes(q)));
+    }
+    const { key, dir } = forgeSortBy;
+    filtered.sort((a, b) => {
+      const av = a[key];
+      const bv = b[key];
+      if (typeof av === 'number' && typeof bv === 'number') return dir === 'asc' ? av - bv : bv - av;
+      return dir === 'asc' ? String(av).localeCompare(String(bv)) : String(bv).localeCompare(String(av));
+    });
+    return filtered;
+  }
+
+  const toggleForgeSort = (key) => setForgeSortBy(prev => ({ key, dir: prev.key === key && prev.dir === 'asc' ? 'desc' : 'asc' }));
+
+  const updateAllegiance = (countryId, newAllegiance) => {
+    if (!borderManagerRef.current) return;
+    const factionMap = { Western: 'NATO', Eastern: 'RUSSIA_BLOC', 'Non-Aligned': 'SWING', NATO:'NATO', RUSSIA_BLOC:'RUSSIA_BLOC', CHINA_BLOC:'CHINA_BLOC', SWING:'SWING' };
+    const faction = factionMap[newAllegiance] || 'SWING';
+    borderManagerRef.current.applyUpdate(countryId, { faction });
+    // Update local map state so table reflects change immediately
+    setPsychohistoryMapState(prev => {
+      if (!prev || !prev.country_states) return prev;
+      const next = { ...prev, country_states: { ...prev.country_states } };
+      const cs = { ...(next.country_states[countryId] || {}) };
+      cs.faction = faction;
+      // Derive human-readable allegiance label
+      const label = (faction === 'NATO') ? 'Western' : (faction === 'RUSSIA_BLOC' || faction === 'CHINA_BLOC') ? 'Eastern' : 'Non-Aligned';
+      cs.allegiance = label;
+      cs.bloc = label;
+      next.country_states[countryId] = cs;
+      return next;
+    });
+  };
+
+  // Ensure we have complete country data (~200+) for Country Data panel
+  async function ensureCountryData() {
+    // If we already have a comprehensive set, skip
+    if (psychohistoryMapState && psychohistoryMapState.country_states && Object.keys(psychohistoryMapState.country_states).length > 100) return;
+
+    // Build baseStates from borders first (ensures ~200 entries), then overlay with /worlddata and /ref
+    let baseStates = {};
+
+    // Step 1: borders baseline
+    try {
+      const rBorders = await fetch('/borders-enhanced-detailed.json');
+      const gj = await rBorders.json();
+      if (gj && Array.isArray(gj.features)) {
+        gj.features.forEach((f) => {
+          const id = f?.properties?.id || f?.properties?.iso_a3 || f?.properties?.iso_a2 || f?.properties?.name || Math.random().toString(36).slice(2);
+          const name = f?.properties?.name || id;
+          const key = String(id).toUpperCase();
+          baseStates[key] = {
+            id: key,
+            name,
+            gdp: 0,
+            nuclear_warheads: 0,
+            population: 0,
+            military_budget: 0,
+            regime_type: 'Unknown',
+            bloc: 'Unknown',
+            allegiance: 'Unknown',
+            morale: 0.5
+          };
+        });
+      }
+    } catch {}
+
+    // Step 2: overlay legacy /worlddata/countries if available
+    try {
+      const rLegacy = await fetch(`${API}/worlddata/countries`);
+      if (rLegacy.ok) {
+        const obj = await rLegacy.json();
+        if (obj && typeof obj === 'object') {
+          Object.entries(obj).forEach(([key, v]) => {
+            const id = String(key).toUpperCase();
+            const prev = baseStates[id] || { id, name: id };
+            baseStates[id] = {
+              ...prev,
+              name: (v && v.name) || prev.name,
+              gdp: (v && (v.gdp_usd_billion ?? v.gdp_2024 ?? v.gdp)) ?? prev.gdp ?? 0,
+              nuclear_warheads: (v && (v.nuclear_warheads ?? v.nukes)) ?? prev.nuclear_warheads ?? 0,
+              population: (v && v.population) ?? prev.population ?? 0,
+              military_budget: (v && v.military_budget) ?? prev.military_budget ?? 0,
+              regime_type: (v && (v.gov_type || v.regime_type)) || prev.regime_type || 'Unknown',
+              bloc: (v && (v.bloc || v.allegiance)) || prev.bloc || 'Unknown',
+              allegiance: (v && (v.allegiance || v.bloc)) || prev.allegiance || 'Unknown',
+              morale: typeof v?.morale === 'number' ? v.morale : prev.morale ?? 0.5,
+            };
+          });
+        }
+      }
+    } catch {}
+
+    // Step 3: overlay /ref countries for richer fields
+    try {
+      const rApi = await fetch(`${API}/ref/countries?limit=10000`);
+      if (rApi.ok) {
+        const apiData = await rApi.json();
+        for (const v of apiData || []) {
+          const id = v.code || v.code3 || v.code2 || v.name;
+          if (!id) continue;
+          const key = String(id).toUpperCase();
+          const prev = baseStates[key] || { id: key, name: v.name || key };
+          baseStates[key] = {
+            ...prev,
+            name: v.name || prev.name,
+            gdp: v.gdp_usd_billion ?? prev.gdp ?? 0,
+            population: v.population ?? prev.population ?? 0,
+            regime_type: v.gov_type || prev.regime_type || 'Unknown'
+          };
+        }
+      }
+    } catch {}
+
+    // Step 4: overlay live World Bank GDP and Population
+    try {
+      const [gdpRes, popRes] = await Promise.all([
+        fetch(`${API}/ref/worldbank/gdp`),
+        fetch(`${API}/ref/worldbank/population`)
+      ]);
+      const gdp = gdpRes.ok ? await gdpRes.json() : {};
+      const pop = popRes.ok ? await popRes.json() : {};
+      Object.keys(baseStates).forEach((id) => {
+        const key = String(id).toUpperCase();
+        const prev = baseStates[key];
+        const gdpVal = gdp && gdp[key] ? gdp[key].value : undefined;
+        const popVal = pop && pop[key] ? pop[key].value : undefined;
+        baseStates[key] = {
+          ...prev,
+          gdp: typeof gdpVal === 'number' ? gdpVal : prev.gdp,
+          population: typeof popVal === 'number' ? popVal : prev.population
+        };
+      });
+    } catch {}
+
+    if (Object.keys(baseStates).length > 0) {
+      setPsychohistoryMapState({ country_states: baseStates });
+    }
+  }
+
+  // Load leaders dataset for Databases tab
+  async function ensureLeadersData() {
+    if (leadersRows && leadersRows.length > 0) return;
+    try {
+      const r = await fetch(`${API}/ref/leaders?limit=10000`);
+      if (r.ok) {
+        const data = await r.json();
+        setLeadersRows(Array.isArray(data) ? data : []);
+      }
+    } catch {}
+  }
+
+  useEffect(() => {
+    if (panelVisible.country && databasesTab === 'leaders') {
+      ensureLeadersData();
+    }
+  }, [panelVisible.country, databasesTab]);
+
+  // Ensure countries are loaded whenever the Databases panel opens
+  useEffect(() => {
+    if (panelVisible.country) {
+      const count = psychohistoryMapState && psychohistoryMapState.country_states ? Object.keys(psychohistoryMapState.country_states).length : 0;
+      if (!count || count < 5) {
+        ensureCountryData();
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [panelVisible.country]);
+
+  // Dragging + keep dropdown anchored on scroll
+  useEffect(() => {
+    const onMove = (e) => {
+      if (!draggingRef.current) return;
+      const { key, offsetX, offsetY } = draggingRef.current;
+      setPanelPos(prev => ({ ...prev, [key]: { x: Math.max(0, e.clientX - offsetX), y: Math.max(0, e.clientY - offsetY) } }));
+    };
+    const onUp = () => { draggingRef.current = null; };
+    const onScroll = () => {
+      if (showSettingsMenu && settingsButtonRef.current) {
+        const rect = settingsButtonRef.current.getBoundingClientRect();
+        setSettingsMenuPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+      }
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    window.addEventListener('scroll', onScroll, true);
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('scroll', onScroll, true);
+    };
+  }, [showSettingsMenu]);
 
   useEffect(() => {
     const map = new maplibregl.Map({
@@ -239,8 +473,6 @@ export default function App() {
         });
       });
 
-      checkServicesStatus();
-      
       setTimeout(() => {
         if (borderManagerRef.current) {
           borderManagerRef.current.updateNuclearIndicators();
@@ -250,6 +482,20 @@ export default function App() {
 
     return () => map.remove();
   }, [currentStyle]);
+
+  // Check service status on mount and periodically
+  useEffect(() => {
+    // Initial check
+    checkServicesStatus();
+    
+    // Set up periodic check every 30 seconds
+    const intervalId = setInterval(() => {
+      checkServicesStatus();
+    }, 30000);
+    
+    return () => clearInterval(intervalId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   // Keyboard event handling for Psychohistory
   useEffect(() => {
@@ -435,6 +681,50 @@ export default function App() {
     }
   };
 
+  // Define helper functions in the correct order (bottom-up dependency)
+  const fetchCountryComparison = async () => {
+    try {
+      const response = await fetch(`${API}/playable-countries/compare`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      setCountryComparison(data);
+    } catch (error) {
+      console.warn("Comparison fetch failed, using fallback:", error);
+      setCountryComparison(null);
+    }
+  };
+
+  const fetchPlayableCountries = async () => {
+    try {
+      const response = await fetch(`${API}/playable-countries`);
+      
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
+      
+      const data = await response.json();
+      setPlayableCountries(data);
+      
+      await fetchCountryComparison();
+    } catch (error) {
+      console.error("Error fetching playable countries:", error);
+      setPlayableCountries({
+        countries: ["US", "CN", "RU", "EU", "IN", "IR", "IL", "KP"],
+        total: 8,
+        categories: {
+          major_powers: ["US", "CN", "RU", "EU"],
+          rising_powers: ["IN"],
+          regional_players: ["IR", "IL", "KP"]
+        }
+      });
+      setCountryComparison(null);
+    }
+  };
+
   // Check services status and fetch data
   const checkServicesStatus = async () => {
     try {
@@ -470,50 +760,6 @@ export default function App() {
         loading: false
       });
       setPlayableCountries(["US", "CN", "RU", "EU", "IN", "IR", "IL", "KP"]);
-    }
-  };
-
-
-  const fetchPlayableCountries = async () => {
-    try {
-      const response = await fetch(`${API}/playable-countries`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      setPlayableCountries(data);
-      
-      await fetchCountryComparison();
-    } catch (error) {
-      console.error("Error fetching playable countries:", error);
-      setPlayableCountries({
-        countries: ["US", "CN", "RU", "EU", "IN", "IR", "IL", "KP"],
-        total: 8,
-        categories: {
-          major_powers: ["US", "CN", "RU", "EU"],
-          rising_powers: ["IN"],
-          regional_players: ["IR", "IL", "KP"]
-        }
-      });
-      setCountryComparison(null);
-    }
-  };
-
-  const fetchCountryComparison = async () => {
-    try {
-      const response = await fetch(`${API}/playable-countries/compare`);
-      
-      if (!response.ok) {
-        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
-      }
-      
-      const data = await response.json();
-      setCountryComparison(data);
-    } catch (error) {
-      console.warn("Comparison fetch failed, using fallback:", error);
-      setCountryComparison(null);
     }
   };
 
@@ -836,10 +1082,115 @@ export default function App() {
   };
 
   return (
-    <div style={{ display: 'flex', height: '100vh', background: '#0f172a' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', height: '100vh', width: '100vw', background: '#0f172a', overflow: 'hidden' }}>
+      {/* Top Navigation Bar */}
+      <div style={{ 
+        background: '#000', 
+        height: '60px', 
+        display: 'flex', 
+        alignItems: 'center', 
+        justifyContent: 'center',
+        position: 'relative',
+        borderBottom: '1px solid #333',
+        zIndex: 2000
+      }}>
+        {/* Back to Menu Button */}
+        {!showMainMenu && (
+          <div style={{ position: 'absolute', left: '20px' }}>
+            <button 
+              onClick={returnToMainMenu}
+              style={{ 
+                background: '#1a1a1a', 
+                border: '1px solid #333',
+                color: '#fff',
+                width: '40px',
+                height: '40px',
+                borderRadius: '4px',
+                cursor: 'pointer',
+                fontSize: '1.5rem',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transition: 'all 0.2s'
+              }}
+              onMouseEnter={(e) => e.target.style.background = '#2a2a2a'}
+              onMouseLeave={(e) => e.target.style.background = '#1a1a1a'}
+            >
+              ←
+            </button>
+          </div>
+        )}
+        
+        <h1 style={{ 
+          margin: 0, 
+          fontSize: '1.5rem', 
+          fontWeight: 'bold', 
+          color: '#fff',
+          letterSpacing: '2px'
+        }}>
+          MORALOCRACY
+        </h1>
+        
+         {/* Settings Dropdown with hoverable menu and floating panels */}
+        <div style={{ position: 'absolute', right: '20px' }}>
+          <button 
+             ref={settingsButtonRef}
+             onClick={(e) => {
+               setShowSettingsMenu(prev => !prev);
+               const rect = e.currentTarget.getBoundingClientRect();
+               setSettingsMenuPos({ top: rect.bottom + 8, right: window.innerWidth - rect.right });
+             }}
+            style={{ 
+              background: '#1a1a1a', 
+              border: '1px solid #333',
+              color: '#fff',
+              width: '40px',
+              height: '40px',
+              borderRadius: '4px',
+              cursor: 'pointer',
+              fontSize: '1.2rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              transition: 'all 0.2s'
+            }}
+            onMouseEnter={(e) => e.target.style.background = '#2a2a2a'}
+            onMouseLeave={(e) => e.target.style.background = '#1a1a1a'}
+          >
+            ⚙️
+          </button>
+           {showSettingsMenu && (
+             <div ref={settingsMenuRef}
+               style={{ position: 'fixed', right: settingsMenuPos.right, top: settingsMenuPos.top, background: '#000', border: '1px solid #333', borderRadius: 8, padding: 6, minWidth: 200, zIndex: 2200, maxHeight: '60vh', overflowY: 'auto' }}
+               onWheel={(e)=>{ e.stopPropagation(); }}
+             >
+                {[
+                  { key: 'country', label: 'Databases' },
+                 { key: 'api', label: 'API Status' },
+                 { key: 'map', label: 'Map' },
+                 { key: 'about', label: 'About' },
+               ].map(item => (
+                 <div key={item.key}
+                   onClick={() => {
+                     setPanelVisible(prev => ({ ...prev, [item.key]: true }));
+                     if (item.key === 'country') { ensureCountryData(); }
+                     setShowSettingsMenu(false);
+                   }}
+                   style={{ padding: '8px 10px', borderRadius: 6, cursor: 'pointer' }}
+                   onMouseEnter={(e)=> e.currentTarget.style.background = '#111'}
+                   onMouseLeave={(e)=> e.currentTarget.style.background = 'transparent'}
+                 >
+                   {item.label}
+                 </div>
+               ))}
+             </div>
+           )}
+        </div>
+      </div>
+
       {/* Map Container - Always visible */}
-      <div style={{ flex: 1, position: 'relative' }}>
-        <div id="map" style={{ position: "absolute", inset: 0 }} />
+      <div style={{ flex: 1, position: 'relative', width: '100%', height: '100%' }}>
+        <div id="map" style={{ position: "absolute", top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%' }} />
       
         {/* Main Menu Overlay - Only when showMainMenu is true */}
         {showMainMenu && (
@@ -849,208 +1200,231 @@ export default function App() {
           left: 0,
           right: 0,
           bottom: 0,
-            background: 'rgba(15, 23, 42, 0.85)',
-            backdropFilter: 'blur(8px)',
+            background: '#000',
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
           alignItems: 'center',
-            zIndex: 1000,
-          padding: '20px'
+            zIndex: 1500,
+          padding: '20px',
+          pointerEvents: 'auto'
         }}>
           <div style={{
             textAlign: 'center',
-            marginBottom: '60px'
+            marginBottom: '80px'
           }}>
             <h1 style={{
-              fontSize: '3.5rem',
+              fontSize: '4.5rem',
               fontWeight: 'bold',
-              color: '#f8fafc',
+              color: '#fff',
               margin: 0,
-              textShadow: '0 4px 8px rgba(0,0,0,0.3)',
-              background: 'linear-gradient(135deg, #3b82f6, #8b5cf6)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent'
+              letterSpacing: '8px',
+              fontFamily: 'monospace'
             }}>
-              WWIII Simulator
+              WWIII SIMULATOR
             </h1>
+            <div style={{
+              width: '120px',
+              height: '2px',
+              background: '#fff',
+              margin: '20px auto',
+              opacity: 0.3
+            }}></div>
             <p style={{
-              fontSize: '1.2rem',
-              color: '#94a3b8',
+              fontSize: '1rem',
+              color: '#888',
               marginTop: '10px',
-              maxWidth: '600px'
+              maxWidth: '600px',
+              letterSpacing: '2px',
+              fontFamily: 'monospace'
             }}>
-              Experience the future of global conflict through predictive history, AI analysis, and strategic gameplay
+              PREDICTIVE HISTORY • AI ANALYSIS • STRATEGIC GAMEPLAY
             </p>
           </div>
 
           <div style={{
             display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
-            gap: '30px',
-            maxWidth: '1000px',
-            width: '100%'
+            gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+            gap: '2px',
+            maxWidth: '900px',
+            width: '100%',
+            position: 'relative',
+            zIndex: 1501,
+            background: '#333',
+            border: '1px solid #333'
           }}>
             <div 
               onClick={() => selectGameMode('psychohistory')}
               style={{
-                background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
-                border: '2px solid #f59e0b',
-                borderRadius: '16px',
-                padding: '30px',
+                background: '#000',
+                border: 'none',
+                padding: '40px 30px',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: '0 8px 32px rgba(245, 158, 11, 0.2)',
                 position: 'relative',
                 overflow: 'hidden'
               }}
               onMouseEnter={(e) => {
-                e.target.style.transform = 'translateY(-8px)';
-                e.target.style.boxShadow = '0 16px 48px rgba(245, 158, 11, 0.3)';
+                e.currentTarget.style.background = '#1a1a1a';
               }}
               onMouseLeave={(e) => {
-                e.target.style.transform = 'translateY(0)';
-                e.target.style.boxShadow = '0 8px 32px rgba(245, 158, 11, 0.2)';
+                e.currentTarget.style.background = '#000';
               }}
             >
-              <div style={{ fontSize: '3rem', marginBottom: '20px' }}>🧠</div>
+              <div style={{ 
+                fontSize: '2.5rem', 
+                marginBottom: '20px',
+                filter: 'grayscale(100%)'
+              }}>🧠</div>
               <h2 style={{
-                fontSize: '1.8rem',
+                fontSize: '1.5rem',
                 fontWeight: 'bold',
-                color: '#f8fafc',
-                margin: '0 0 15px 0'
+                color: '#fff',
+                margin: '0 0 15px 0',
+                letterSpacing: '3px',
+                fontFamily: 'monospace'
               }}>
-                Psychohistory
+                PSYCHOHISTORY
               </h2>
               <p style={{
-                color: '#cbd5e1',
-                lineHeight: '1.6',
-                margin: '0 0 20px 0'
+                color: '#888',
+                lineHeight: '1.8',
+                margin: '0 0 20px 0',
+                fontSize: '0.85rem'
               }}>
-                The World Brain - Automated predictive simulation using real news, historical patterns, and AI analysis. 
-                Watch as the simulation unfolds without player interference.
+                The World Brain - Automated predictive simulation using real news, historical patterns, and AI analysis.
               </p>
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                color: '#fbbf24',
-                fontSize: '0.9rem',
-                fontWeight: '500'
+                color: '#fff',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                letterSpacing: '2px',
+                fontFamily: 'monospace'
               }}>
-                <span>Witness the World Brain →</span>
+                <span>WITNESS →</span>
               </div>
             </div>
 
             <div 
               onClick={() => selectGameMode('single_player')}
               style={{
-                background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
-                border: '2px solid #3b82f6',
-                borderRadius: '16px',
-                padding: '30px',
+                background: '#000',
+                border: 'none',
+                padding: '40px 30px',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: '0 8px 32px rgba(59, 130, 246, 0.2)',
                 position: 'relative',
                 overflow: 'hidden'
               }}
               onMouseEnter={(e) => {
-                e.target.style.transform = 'translateY(-8px)';
-                e.target.style.boxShadow = '0 16px 48px rgba(59, 130, 246, 0.3)';
+                e.currentTarget.style.background = '#1a1a1a';
               }}
               onMouseLeave={(e) => {
-                e.target.style.transform = 'translateY(0)';
-                e.target.style.boxShadow = '0 8px 32px rgba(59, 130, 246, 0.2)';
+                e.currentTarget.style.background = '#000';
               }}
             >
-              <div style={{ fontSize: '3rem', marginBottom: '20px' }}>🎮</div>
+              <div style={{ 
+                fontSize: '2.5rem', 
+                marginBottom: '20px',
+                filter: 'grayscale(100%)'
+              }}>🎮</div>
               <h2 style={{
-                fontSize: '1.8rem',
+                fontSize: '1.5rem',
                 fontWeight: 'bold',
-                color: '#f8fafc',
-                margin: '0 0 15px 0'
+                color: '#fff',
+                margin: '0 0 15px 0',
+                letterSpacing: '3px',
+                fontFamily: 'monospace'
               }}>
-                Single Player
+                SINGLE PLAYER
               </h2>
               <p style={{
-                color: '#cbd5e1',
-                lineHeight: '1.6',
-                margin: '0 0 20px 0'
+                color: '#888',
+                lineHeight: '1.8',
+                margin: '0 0 20px 0',
+                fontSize: '0.85rem'
               }}>
-                Command one of 8 major powers in a world where AI controls all other nations. 
-                Make strategic decisions and shape the course of history.
+                Command one of 8 major powers in a world where AI controls all other nations.
               </p>
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                color: '#60a5fa',
-                fontSize: '0.9rem',
-                fontWeight: '500'
+                color: '#fff',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                letterSpacing: '2px',
+                fontFamily: 'monospace'
               }}>
-                <span>Choose your nation →</span>
+                <span>CHOOSE →</span>
               </div>
             </div>
 
             <div 
               onClick={() => selectGameMode('multiplayer')}
               style={{
-                background: 'linear-gradient(135deg, #1e293b 0%, #334155 100%)',
-                border: '2px solid #10b981',
-                borderRadius: '16px',
-                padding: '30px',
+                background: '#000',
+                border: 'none',
+                padding: '40px 30px',
                 cursor: 'pointer',
                 transition: 'all 0.3s ease',
-                boxShadow: '0 8px 32px rgba(16, 185, 129, 0.2)',
                 position: 'relative',
                 overflow: 'hidden'
               }}
               onMouseEnter={(e) => {
-                e.target.style.transform = 'translateY(-8px)';
-                e.target.style.boxShadow = '0 16px 48px rgba(16, 185, 129, 0.3)';
+                e.currentTarget.style.background = '#1a1a1a';
               }}
               onMouseLeave={(e) => {
-                e.target.style.transform = 'translateY(0)';
-                e.target.style.boxShadow = '0 8px 32px rgba(16, 185, 129, 0.2)';
+                e.currentTarget.style.background = '#000';
               }}
             >
-              <div style={{ fontSize: '3rem', marginBottom: '20px' }}>👥</div>
+              <div style={{ 
+                fontSize: '2.5rem', 
+                marginBottom: '20px',
+                filter: 'grayscale(100%)'
+              }}>👥</div>
               <h2 style={{
-                fontSize: '1.8rem',
+                fontSize: '1.5rem',
                 fontWeight: 'bold',
-                color: '#f8fafc',
-                margin: '0 0 15px 0'
+                color: '#fff',
+                margin: '0 0 15px 0',
+                letterSpacing: '3px',
+                fontFamily: 'monospace'
               }}>
-                Multiplayer
+                MULTIPLAYER
               </h2>
               <p style={{
-                color: '#cbd5e1',
-                lineHeight: '1.6',
-                margin: '0 0 20px 0'
+                color: '#888',
+                lineHeight: '1.8',
+                margin: '0 0 20px 0',
+                fontSize: '0.85rem'
               }}>
-                Compete with 2-8 players in simultaneous decision-making rounds. 
-                Hidden actions are revealed at round end - like Werewolf or Mafia.
+                Compete with 2-8 players in simultaneous decision-making rounds.
               </p>
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
-                color: '#34d399',
-                fontSize: '0.9rem',
-                fontWeight: '500'
+                color: '#fff',
+                fontSize: '0.75rem',
+                fontWeight: '600',
+                letterSpacing: '2px',
+                fontFamily: 'monospace'
               }}>
-                <span>Join the battle →</span>
+                <span>JOIN →</span>
               </div>
             </div>
-
-
           </div>
 
           <div style={{
-            marginTop: '60px',
+            marginTop: '80px',
             textAlign: 'center',
-            color: '#64748b',
-            fontSize: '0.9rem'
+            color: '#444',
+            fontSize: '0.7rem',
+            letterSpacing: '2px',
+            fontFamily: 'monospace'
           }}>
-            <p>Powered by Predictive History, ChatGPT AI, and Real-time Geopolitical Analysis</p>
+            <p>POWERED BY PREDICTIVE HISTORY • CHATGPT AI • REAL-TIME GEOPOLITICAL ANALYSIS</p>
           </div>
         </div>
         )}
@@ -1058,121 +1432,624 @@ export default function App() {
         {/* Game Interface - Always visible when not in main menu */}
         {!showMainMenu && (
         <>
-            <button
-              onClick={returnToMainMenu}
-              style={{
-                position: 'absolute',
-                top: '20px',
-                left: '20px',
-                zIndex: 1000,
-                background: 'rgba(15, 23, 42, 0.9)',
-                border: '1px solid #475569',
-                borderRadius: '8px',
-                padding: '10px 16px',
-                color: '#f8fafc',
-                cursor: 'pointer',
-                fontSize: '14px',
-                fontWeight: '500',
-                backdropFilter: 'blur(10px)',
-                transition: 'all 0.2s ease'
-              }}
-              onMouseEnter={(e) => {
-                e.target.style.background = 'rgba(30, 41, 59, 0.95)';
-                e.target.style.borderColor = '#64748b';
-              }}
-              onMouseLeave={(e) => {
-                e.target.style.background = 'rgba(15, 23, 42, 0.9)';
-                e.target.style.borderColor = '#475569';
-              }}
-            >
-              ← Back to Menu
-            </button>
+            {false && showServiceStatus && (
+              <div
+                style={{
+                  position: "fixed",
+                  right: 20,
+                  top: 70,
+                  width: 400,
+                  background: "#000",
+                  color: "#fff",
+                  borderRadius: 12,
+                  boxShadow: "0 8px 20px rgba(0,0,0,.15)",
+                  maxHeight: "80vh",
+                  overflowY: "auto",
+                  border: "1px solid #333",
+                  zIndex: 2001
+                }}
+              >
+                {/* Tab Headers */}
+                <div style={{ 
+                  display: 'flex', 
+                  borderBottom: '1px solid #333',
+                  background: '#0a0a0a'
+                }}>
+                  <button
+                    onClick={() => setActiveSettingsTab('api')}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      background: activeSettingsTab === 'api' ? '#1a1a1a' : 'transparent',
+                      border: 'none',
+                      borderBottom: activeSettingsTab === 'api' ? '2px solid #3b82f6' : '2px solid transparent',
+                      color: activeSettingsTab === 'api' ? '#3b82f6' : '#999',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    🚀 API Status
+                  </button>
+                  <button
+                    onClick={() => setActiveSettingsTab('map')}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      background: activeSettingsTab === 'map' ? '#1a1a1a' : 'transparent',
+                      border: 'none',
+                      borderBottom: activeSettingsTab === 'map' ? '2px solid #3b82f6' : '2px solid transparent',
+                      color: activeSettingsTab === 'map' ? '#3b82f6' : '#999',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    🗺️ Map
+                  </button>
+                  <button
+                    onClick={() => setActiveSettingsTab('about')}
+                    style={{
+                      flex: 1,
+                      padding: '12px',
+                      background: activeSettingsTab === 'about' ? '#1a1a1a' : 'transparent',
+                      border: 'none',
+                      borderBottom: activeSettingsTab === 'about' ? '2px solid #3b82f6' : '2px solid transparent',
+                      color: activeSettingsTab === 'about' ? '#3b82f6' : '#999',
+                      cursor: 'pointer',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      transition: 'all 0.2s'
+                    }}
+                  >
+                    ℹ️ About
+                  </button>
+                </div>
 
-            <div
-              style={{
-                position: "absolute",
-                left: 12,
-                top: 12,
-                width: 350,
-                background: "#000",
-                color: "#fff",
-                padding: 16,
-                borderRadius: 12,
-                boxShadow: "0 8px 20px rgba(0,0,0,.15)",
-                maxHeight: "80vh",
-                overflowY: "auto"
-              }}
-            >
-              <div style={{ fontWeight: 600, marginBottom: 12, fontSize: 16 }}>
-                🚀 Enhanced Services Status
-              </div>
-
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ fontWeight: 500, marginBottom: 8 }}>Service Status:</div>
-                {servicesStatus.loading ? (
-                  <div style={{ color: "#666", fontSize: 14 }}>Loading services...</div>
-                ) : (
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ 
-                        width: 12, 
-                        height: 12, 
-                        borderRadius: "50%", 
-                        backgroundColor: servicesStatus.chatgpt ? "#10b981" : "#ef4444" 
-                      }}></span>
-                      <span style={{ fontSize: 14 }}>
-                        🤖 OpenAI GPT-4o-mini: {servicesStatus.chatgpt ? "✅ Active" : "❌ Inactive"}
-                      </span>
-                    </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                      <span style={{ 
-                        width: 12, 
-                        height: 12, 
-                        borderRadius: "50%", 
-                        backgroundColor: servicesStatus.news ? "#10b981" : "#ef4444" 
-                      }}></span>
-                      <span style={{ fontSize: 14 }}>
-                        📰 News API: {servicesStatus.news ? "✅ Active" : "❌ Inactive"}
-                      </span>
-                    </div>
-                  </div>
-                )}
-              </div>
-
-              {costInfo && (
-                <div style={{ marginBottom: 16, padding: 12, background: "#111", borderRadius: 8 }}>
-                  <div style={{ fontWeight: 500, marginBottom: 8 }}>💰 Cost Info:</div>
-                  <div style={{ fontSize: 12, color: "#ccc" }}>
-                    <div>Model: {costInfo.pricing?.model || "N/A"}</div>
-                    <div>Input: {costInfo.pricing?.input_per_1m_tokens || "N/A"}</div>
-                    <div>Output: {costInfo.pricing?.output_per_1m_tokens || "N/A"}</div>
-                    {costInfo.cost_estimates && (
-                      <div style={{ marginTop: 4 }}>
-                        <div>Hourly: {costInfo.cost_estimates.hourly_gameplay}</div>
-                        <div>Monthly: {costInfo.cost_estimates.monthly}</div>
+                {/* Tab Content */}
+                <div style={{ padding: 16 }}>
+                  {/* API Status Tab */}
+                  {activeSettingsTab === 'api' && (
+                    <>
+                      <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 16 }}>
+                        API & Services Status
                       </div>
+
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 8 }}>Service Status:</div>
+                        {servicesStatus.loading ? (
+                          <div style={{ color: "#666", fontSize: 14 }}>Loading services...</div>
+                        ) : (
+                          <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <span style={{ 
+                                width: 12, 
+                                height: 12, 
+                                borderRadius: "50%", 
+                                backgroundColor: servicesStatus.chatgpt ? "#10b981" : "#ef4444" 
+                              }}></span>
+                              <span style={{ fontSize: 14 }}>
+                                🤖 OpenAI GPT-4o-mini: {servicesStatus.chatgpt ? "✅ Active" : "❌ Inactive"}
+                              </span>
+                            </div>
+                            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                              <span style={{ 
+                                width: 12, 
+                                height: 12, 
+                                borderRadius: "50%", 
+                                backgroundColor: servicesStatus.news ? "#10b981" : "#ef4444" 
+                              }}></span>
+                              <span style={{ fontSize: 14 }}>
+                                📰 News API: {servicesStatus.news ? "✅ Active" : "❌ Inactive"}
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+
+                      {costInfo && (
+                        <div style={{ marginBottom: 16, padding: 12, background: "#111", borderRadius: 8 }}>
+                          <div style={{ fontWeight: 500, marginBottom: 8 }}>💰 Cost Info:</div>
+                          <div style={{ fontSize: 12, color: "#ccc" }}>
+                            <div>Model: {costInfo.pricing?.model || "N/A"}</div>
+                            <div>Input: {costInfo.pricing?.input_per_1m_tokens || "N/A"}</div>
+                            <div>Output: {costInfo.pricing?.output_per_1m_tokens || "N/A"}</div>
+                            {costInfo.cost_estimates && (
+                              <div style={{ marginTop: 4 }}>
+                                <div>Hourly: {costInfo.cost_estimates.hourly_gameplay}</div>
+                                <div>Monthly: {costInfo.cost_estimates.monthly}</div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      <button 
+                        onClick={checkServicesStatus}
+                        style={{
+                          padding: "8px 16px",
+                          background: "#3b82f6",
+                          color: "white",
+                          border: "none",
+                          borderRadius: 6,
+                          cursor: "pointer",
+                          fontSize: 12,
+                          width: '100%'
+                        }}
+                      >
+                        🔄 Refresh Status
+                      </button>
+                    </>
+                  )}
+
+                  {/* Map Settings Tab */}
+                  {activeSettingsTab === 'map' && (
+                    <>
+                      <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 16 }}>
+                        Map Settings
+                      </div>
+
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 8, fontSize: 14 }}>Map Style:</div>
+                        <select
+                          value={currentStyle}
+                          onChange={(e) => switchStyle(e.target.value)}
+                          style={{
+                            width: '100%',
+                            padding: '8px 12px',
+                            background: '#1a1a1a',
+                            border: '1px solid #333',
+                            color: '#fff',
+                            borderRadius: 6,
+                            fontSize: 13,
+                            cursor: 'pointer'
+                          }}
+                        >
+                          <option value="Landscape">🌄 Landscape</option>
+                          <option value="SatelliteMain">🛰️ Satellite</option>
+                          <option value="ModernPolitical">🗺️ Modern Political</option>
+                          <option value="SatellitePolitical">🌍 Satellite Political</option>
+                          <option value="GreyscalePolitical">⚫ Greyscale</option>
+                          <option value="TonerBW">⬛ Black & White</option>
+                        </select>
+                      </div>
+
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 8, fontSize: 14 }}>Display Options:</div>
+                        <div style={{ 
+                          padding: 12, 
+                          background: '#111', 
+                          borderRadius: 8,
+                          fontSize: 13,
+                          color: '#999'
+                        }}>
+                          <div style={{ marginBottom: 8 }}>
+                            ℹ️ Hover over countries to see details
+                          </div>
+                          <div style={{ marginBottom: 8 }}>
+                            🖱️ Click countries to select them
+                          </div>
+                          <div>
+                            🎨 Nuclear indicators show warhead counts
+                          </div>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  {/* About Tab */}
+                  {activeSettingsTab === 'about' && (
+                    <>
+                      <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 16 }}>
+                        About WWIII Simulator
+                      </div>
+
+                      <div style={{ marginBottom: 16, padding: 12, background: '#111', borderRadius: 8 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 8 }}>Version:</div>
+                        <div style={{ fontSize: 13, color: '#999' }}>v1.0.0 - Beta</div>
+                      </div>
+
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 8 }}>Keyboard Shortcuts:</div>
+                        <div style={{ 
+                          padding: 12, 
+                          background: '#111', 
+                          borderRadius: 8,
+                          fontSize: 12,
+                          color: '#ccc'
+                        }}>
+                          <div style={{ marginBottom: 6 }}>
+                            <span style={{ color: '#3b82f6', fontWeight: 600 }}>→ / SPACE</span> - Advance week (Psychohistory)
+                          </div>
+                          <div style={{ marginBottom: 6 }}>
+                            <span style={{ color: '#3b82f6', fontWeight: 600 }}>←</span> - Return to main menu
+                          </div>
+                          <div>
+                            <span style={{ color: '#3b82f6', fontWeight: 600 }}>⚙️</span> - Toggle settings
+                          </div>
+                        </div>
+                      </div>
+
+                      <div style={{ marginBottom: 16 }}>
+                        <div style={{ fontWeight: 500, marginBottom: 8 }}>Credits:</div>
+                        <div style={{ 
+                          padding: 12, 
+                          background: '#111', 
+                          borderRadius: 8,
+                          fontSize: 12,
+                          color: '#ccc'
+                        }}>
+                          <div style={{ marginBottom: 4 }}>🤖 Powered by OpenAI GPT-4o-mini</div>
+                          <div style={{ marginBottom: 4 }}>📰 News API for real-time data</div>
+                          <div style={{ marginBottom: 4 }}>🗺️ MapTiler for map rendering</div>
+                          <div>⚛️ Built with React + Vite</div>
+                        </div>
+                      </div>
+
+                      <div style={{ 
+                        padding: 12, 
+                        background: '#1a1a2e', 
+                        borderRadius: 8,
+                        fontSize: 11,
+                        color: '#64748b',
+                        borderLeft: '3px solid #3b82f6'
+                      }}>
+                        Experience the future of global conflict through predictive history, AI analysis, and strategic gameplay.
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+            {panelVisible.country && (
+              <div style={{ position:'fixed', left: panelPos.country.x, top: panelPos.country.y, width: 520, background:'#000', color:'#fff', border:'1px solid #333', borderRadius:12, boxShadow:'0 8px 20px rgba(0,0,0,.15)', zIndex:2100 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:12, borderBottom:'1px solid #333', cursor:'move' }}
+                  onMouseDown={(e)=>{ draggingRef.current = { key:'country', offsetX: e.clientX - panelPos.country.x, offsetY: e.clientY - panelPos.country.y }; }}
+                  onMouseUp={()=>{ draggingRef.current = null; }}
+                >
+                  <div style={{ fontWeight:600 }}>Databases</div>
+                  <button onClick={()=>setPanelVisible(p=>({ ...p, country:false }))} style={{ background:'#dc2626', border:'none', color:'#fff', padding:'6px 10px', borderRadius:6, cursor:'pointer' }}>Close</button>
+                </div>
+                <div style={{ padding:12 }}>
+                  <div style={{ marginBottom:8 }}>
+                    <input value={forgeQuery} onChange={(e)=>setForgeQuery(e.target.value)} placeholder="Search…" style={{ width:'100%', padding:'8px 10px', background:'#111', border:'1px solid #333', borderRadius:6, color:'#fff' }} />
+                  </div>
+                  <div style={{ overflow:'auto', maxHeight:'60vh' }}>
+                    {/* Databases tabs */}
+                    <div style={{ display:'flex', gap:6, marginBottom:8, flexWrap:'wrap' }}>
+                      {[
+                        { key:'countries', label:'Countries' },
+                        { key:'leaders', label:'Leaders' },
+                        { key:'allegiances', label:'Allegiances' },
+                        { key:'gdp', label:'GDP' },
+                        { key:'nukes', label:'Nukes' },
+                        { key:'population', label:'Population' },
+                        { key:'military', label:'Military' },
+                        { key:'regime', label:'Regime' },
+                      ].map(tab => (
+                        <button key={tab.key} onClick={()=>setDatabasesTab(tab.key)}
+                          style={{ padding:'6px 10px', border:'1px solid #333', borderRadius:6, background: databasesTab===tab.key?'#1f2937':'#0a0a0a', color:'#ddd', cursor:'pointer' }}>
+                          {tab.label}
+                        </button>
+                      ))}
+                    </div>
+                    {databasesTab==='countries' && (
+                    <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
+                      <thead>
+                        <tr>
+                          <th onClick={()=>toggleForgeSort('name')} style={{ textAlign:'left', padding:'6px', cursor:'pointer', borderBottom:'1px solid #333' }}>
+                            Country{forgeSortBy.key==='name' ? (forgeSortBy.dir==='asc'?' ▲':' ▼') : ''}
+                          </th>
+                          <th onClick={()=>toggleForgeSort('allegiance')} style={{ textAlign:'left', padding:'6px', cursor:'pointer', borderBottom:'1px solid #333' }}>
+                            Allegiance{forgeSortBy.key==='allegiance' ? (forgeSortBy.dir==='asc'?' ▲':' ▼') : ''}
+                          </th>
+                          <th onClick={()=>toggleForgeSort('gdp')} style={{ textAlign:'left', padding:'6px', cursor:'pointer', borderBottom:'1px solid #333' }}>
+                            GDP{forgeSortBy.key==='gdp' ? (forgeSortBy.dir==='asc'?' ▲':' ▼') : ''}
+                          </th>
+                          <th onClick={()=>toggleForgeSort('nukes')} style={{ textAlign:'left', padding:'6px', cursor:'pointer', borderBottom:'1px solid #333' }}>
+                            Nukes{forgeSortBy.key==='nukes' ? (forgeSortBy.dir==='asc'?' ▲':' ▼') : ''}
+                          </th>
+                          <th onClick={()=>toggleForgeSort('population')} style={{ textAlign:'left', padding:'6px', cursor:'pointer', borderBottom:'1px solid #333' }}>
+                            Population{forgeSortBy.key==='population' ? (forgeSortBy.dir==='asc'?' ▲':' ▼') : ''}
+                          </th>
+                          <th onClick={()=>toggleForgeSort('military_budget')} style={{ textAlign:'left', padding:'6px', cursor:'pointer', borderBottom:'1px solid #333' }}>
+                            Military Budget{forgeSortBy.key==='military_budget' ? (forgeSortBy.dir==='asc'?' ▲':' ▼') : ''}
+                          </th>
+                          <th onClick={()=>toggleForgeSort('regime_type')} style={{ textAlign:'left', padding:'6px', cursor:'pointer', borderBottom:'1px solid #333' }}>
+                            Regime{forgeSortBy.key==='regime_type' ? (forgeSortBy.dir==='asc'?' ▲':' ▼') : ''}
+                          </th>
+                          <th style={{ width: 120, borderBottom:'1px solid #333' }}>Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {getCountryRows().map(row => (
+                          <tr key={row.id} style={{ background:'#0b1220' }}>
+                            <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.name}</td>
+                            <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.allegiance}</td>
+                            <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{Number(row.gdp).toLocaleString()}</td>
+                            <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.nukes}</td>
+                            <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{Number(row.population||0).toLocaleString()}</td>
+                            <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>
+                              <select defaultValue={row.allegiance} onChange={(e)=>updateAllegiance(row.id, e.target.value)} style={{ padding:'4px 6px', background:'#111', color:'#fff', border:'1px solid #333', borderRadius:6 }}>
+                                {['Western','Eastern','Non-Aligned','NATO','RUSSIA_BLOC','CHINA_BLOC','SWING'].map(a => (
+                                  <option key={a} value={a}>{a}</option>
+                                ))}
+                              </select>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    )}
+                    {databasesTab==='leaders' && (
+                      <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Name</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Title</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Country</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Start Date</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Ideology</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Approval</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {(leadersRows||[])
+                            .filter(row => {
+                              if (!forgeQuery) return true;
+                              const q = forgeQuery.toLowerCase();
+                              return Object.values(row).some(v => String(v).toLowerCase().includes(q));
+                            })
+                            .map(row => (
+                            <tr key={row.id} style={{ background:'#0b1220' }}>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.name}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.title}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.country_code}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.start_date || ''}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.ideology || ''}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.approval ?? ''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {databasesTab==='allegiances' && (
+                      <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Country</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Allegiance</th>
+                            <th style={{ width:120, borderBottom:'1px solid #333' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getCountryRows().map(row => (
+                            <tr key={row.id} style={{ background:'#0b1220' }}>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.name}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.allegiance}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>
+                                <select defaultValue={row.allegiance} onChange={(e)=>updateAllegiance(row.id, e.target.value)} style={{ padding:'4px 6px', background:'#111', color:'#fff', border:'1px solid #333', borderRadius:6 }}>
+                                  {['Western','Eastern','Non-Aligned','NATO','RUSSIA_BLOC','CHINA_BLOC','SWING'].map(a => (
+                                    <option key={a} value={a}>{a}</option>
+                                  ))}
+                                </select>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {databasesTab==='gdp' && (
+                      <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Country</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>GDP (USD B)</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getCountryRows().map(row => (
+                            <tr key={row.id} style={{ background:'#0b1220' }}>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.name}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{Number(row.gdp||0).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {databasesTab==='nukes' && (
+                      <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Country</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Warheads</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getCountryRows().map(row => (
+                            <tr key={row.id} style={{ background:'#0b1220' }}>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.name}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.nukes}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {databasesTab==='population' && (
+                      <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Country</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Population</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getCountryRows().map(row => (
+                            <tr key={row.id} style={{ background:'#0b1220' }}>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.name}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{Number(row.population||0).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {databasesTab==='military' && (
+                      <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Country</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Military Budget</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getCountryRows().map(row => (
+                            <tr key={row.id} style={{ background:'#0b1220' }}>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.name}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{Number(row.military_budget||0).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {databasesTab==='regime' && (
+                      <table style={{ width:'100%', fontSize:12, borderCollapse:'collapse' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Country</th>
+                            <th style={{ textAlign:'left', padding:'6px', borderBottom:'1px solid #333' }}>Regime</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {getCountryRows().map(row => (
+                            <tr key={row.id} style={{ background:'#0b1220' }}>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.name}</td>
+                              <td style={{ padding:'6px', borderBottom:'1px solid #222' }}>{row.regime_type}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
                     )}
                   </div>
                 </div>
-              )}
+              </div>
+            )}
 
+            {/* Floating API panel */}
+            {panelVisible.api && (
+              <div
+                style={{ position:'fixed', left: panelPos.api.x, top: panelPos.api.y, width: 400, background:'#000', color:'#fff', border:'1px solid #333', borderRadius:12, boxShadow:'0 8px 20px rgba(0,0,0,.15)', zIndex:2100 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:8, borderBottom:'1px solid #333', cursor:'move' }}
+                  onMouseDown={(e)=>{ draggingRef.current = { key:'api', offsetX: e.clientX - panelPos.api.x, offsetY: e.clientY - panelPos.api.y }; }}
+                  onMouseUp={()=>{ draggingRef.current = null; }}
+                >
+                  <div style={{ fontWeight:600 }}>API Status</div>
+                  <button onClick={()=>setPanelVisible(p=>({ ...p, api:false }))} style={{ background:'#dc2626', border:'none', color:'#fff', padding:'4px 8px', borderRadius:6, cursor:'pointer' }}>Close</button>
+                </div>
+                <div style={{ padding:16 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 16 }}>API & Services Status</div>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 8 }}>Service Status:</div>
+                    {servicesStatus.loading ? (
+                      <div style={{ color: '#666', fontSize: 14 }}>Loading services...</div>
+                    ) : (
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 12, height: 12, borderRadius: '50%', backgroundColor: servicesStatus.chatgpt ? '#10b981' : '#ef4444' }}></span>
+                          <span style={{ fontSize: 14 }}>🤖 OpenAI GPT-4o-mini: {servicesStatus.chatgpt ? '✅ Active' : '❌ Inactive'}</span>
+                        </div>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                          <span style={{ width: 12, height: 12, borderRadius: '50%', backgroundColor: servicesStatus.news ? '#10b981' : '#ef4444' }}></span>
+                          <span style={{ fontSize: 14 }}>📰 News API: {servicesStatus.news ? '✅ Active' : '❌ Inactive'}</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                  {costInfo && (
+                    <div style={{ marginBottom: 16, padding: 12, background: '#111', borderRadius: 8 }}>
+                      <div style={{ fontWeight: 500, marginBottom: 8 }}>💰 Cost Info:</div>
+                      <div style={{ fontSize: 12, color: '#ccc' }}>
+                        <div>Model: {costInfo.pricing?.model || 'N/A'}</div>
+                        <div>Input: {costInfo.pricing?.input_per_1m_tokens || 'N/A'}</div>
+                        <div>Output: {costInfo.pricing?.output_per_1m_tokens || 'N/A'}</div>
+                        {costInfo.cost_estimates && (
+                          <div style={{ marginTop: 4 }}>
+                            <div>Hourly: {costInfo.cost_estimates.hourly_gameplay}</div>
+                            <div>Monthly: {costInfo.cost_estimates.monthly}</div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+                  <button onClick={checkServicesStatus} style={{ padding: '8px 16px', background: '#3b82f6', color: '#fff', border: 'none', borderRadius: 6, cursor: 'pointer', fontSize: 12, width: '100%' }}>🔄 Refresh Status</button>
+                </div>
+              </div>
+            )}
 
-              <button 
-                onClick={checkServicesStatus}
-                style={{
-                  padding: "8px 16px",
-                  background: "#3b82f6",
-                  color: "white",
-                  border: "none",
-                  borderRadius: 6,
-                  cursor: "pointer",
-                  fontSize: 12
-                }}
-              >
-                🔄 Refresh Status
-              </button>
-            </div>
+            {/* Floating Map panel */}
+            {panelVisible.map && (
+              <div style={{ position:'fixed', left: panelPos.map.x, top: panelPos.map.y, width: 380, background:'#000', color:'#fff', border:'1px solid #333', borderRadius:12, boxShadow:'0 8px 20px rgba(0,0,0,.15)', zIndex:2100 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:8, borderBottom:'1px solid #333', cursor:'move' }}
+                  onMouseDown={(e)=>{ draggingRef.current = { key:'map', offsetX: e.clientX - panelPos.map.x, offsetY: e.clientY - panelPos.map.y }; }}
+                  onMouseUp={()=>{ draggingRef.current = null; }}
+                >
+                  <div style={{ fontWeight:600 }}>Map Settings</div>
+                  <button onClick={()=>setPanelVisible(p=>({ ...p, map:false }))} style={{ background:'#dc2626', border:'none', color:'#fff', padding:'4px 8px', borderRadius:6, cursor:'pointer' }}>Close</button>
+                </div>
+                <div style={{ padding:16 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 16 }}>Map Settings</div>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 8, fontSize: 14 }}>Map Style:</div>
+                    <select value={currentStyle} onChange={(e)=>switchStyle(e.target.value)} style={{ width:'100%', padding:'8px 12px', background:'#1a1a1a', border:'1px solid #333', color:'#fff', borderRadius:6, fontSize:13, cursor:'pointer' }}>
+                      <option value="Landscape">🌄 Landscape</option>
+                      <option value="SatelliteMain">🛰️ Satellite</option>
+                      <option value="ModernPolitical">🗺️ Modern Political</option>
+                      <option value="SatellitePolitical">🌍 Satellite Political</option>
+                      <option value="GreyscalePolitical">⚫ Greyscale</option>
+                      <option value="TonerBW">⬛ Black & White</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            )}
 
+            {/* Floating About panel */}
+            {panelVisible.about && (
+              <div style={{ position:'fixed', left: panelPos.about.x, top: panelPos.about.y, width: 380, background:'#000', color:'#fff', border:'1px solid #333', borderRadius:12, boxShadow:'0 8px 20px rgba(0,0,0,.15)', zIndex:2100 }}>
+                <div style={{ display:'flex', alignItems:'center', justifyContent:'space-between', padding:8, borderBottom:'1px solid #333', cursor:'move' }}
+                  onMouseDown={(e)=>{ draggingRef.current = { key:'about', offsetX: e.clientX - panelPos.about.x, offsetY: e.clientY - panelPos.about.y }; }}
+                  onMouseUp={()=>{ draggingRef.current = null; }}
+                >
+                  <div style={{ fontWeight:600 }}>About</div>
+                  <button onClick={()=>setPanelVisible(p=>({ ...p, about:false }))} style={{ background:'#dc2626', border:'none', color:'#fff', padding:'4px 8px', borderRadius:6, cursor:'pointer' }}>Close</button>
+                </div>
+                <div style={{ padding:16 }}>
+                  <div style={{ fontWeight: 600, marginBottom: 16, fontSize: 16 }}>About WWIII Simulator</div>
+                  <div style={{ marginBottom: 16, padding: 12, background: '#111', borderRadius: 8 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 8 }}>Version:</div>
+                    <div style={{ fontSize: 13, color: '#999' }}>v1.0.0 - Beta</div>
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 8 }}>Keyboard Shortcuts:</div>
+                    <div style={{ padding: 12, background: '#111', borderRadius: 8, fontSize: 12, color: '#ccc' }}>
+                      <div style={{ marginBottom: 6 }}><span style={{ color: '#3b82f6', fontWeight: 600 }}>→ / SPACE</span> - Advance week (Psychohistory)</div>
+                      <div style={{ marginBottom: 6 }}><span style={{ color: '#3b82f6', fontWeight: 600 }}>←</span> - Return to main menu</div>
+                      <div><span style={{ color: '#3b82f6', fontWeight: 600 }}>⚙️</span> - Toggle settings</div>
+                    </div>
+                  </div>
+                  <div style={{ marginBottom: 16 }}>
+                    <div style={{ fontWeight: 500, marginBottom: 8 }}>Credits:</div>
+                    <div style={{ padding: 12, background: '#111', borderRadius: 8, fontSize: 12, color: '#ccc' }}>
+                      <div style={{ marginBottom: 4 }}>🤖 Powered by OpenAI GPT-4o-mini</div>
+                      <div style={{ marginBottom: 4 }}>📰 News API for real-time data</div>
+                      <div style={{ marginBottom: 4 }}>🗺️ MapTiler for map rendering</div>
+                      <div>⚛️ Built with React + Vite</div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
             {currentGameSession && (
               <div style={{
                 position: "absolute",
@@ -1331,7 +2208,8 @@ export default function App() {
                 boxShadow: "0 8px 20px rgba(0,0,0,.15)",
                 border: "2px solid #f59e0b",
                 maxHeight: "80vh",
-                overflowY: "auto"
+                overflowY: "auto",
+                zIndex: 1000
               }}>
                 <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
                   <h3 style={{ margin: 0, fontSize: 18 }}>🧠 Psychohistory</h3>

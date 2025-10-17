@@ -1,0 +1,11 @@
+[
+  {"id":"00000000-0000-4000-8000-000000000001","country_code":"USA","name":"Jane Doe","title":"President","start_date":"2021-01-20","ideology":"centrist","approval":48.5},
+  {"id":"00000000-0000-4000-8000-000000000002","country_code":"CHN","name":"Zhang Wei","title":"General Secretary","start_date":"2012-11-15","ideology":"party","approval":60.0},
+  {"id":"00000000-0000-4000-8000-000000000003","country_code":"RUS","name":"Ivan Petrov","title":"President","start_date":"2012-05-07","ideology":"authoritarian","approval":65.0},
+  {"id":"00000000-0000-4000-8000-000000000004","country_code":"DEU","name":"Erika Mustermann","title":"Chancellor","start_date":"2021-12-08","ideology":"centrist","approval":45.0},
+  {"id":"00000000-0000-4000-8000-000000000005","country_code":"BRA","name":"João Silva","title":"President","start_date":"2023-01-01","ideology":"left","approval":52.0},
+  {"id":"00000000-0000-4000-8000-000000000006","country_code":"IND","name":"Aarav Singh","title":"Prime Minister","start_date":"2014-05-26","ideology":"right","approval":58.0},
+  {"id":"00000000-0000-4000-8000-000000000007","country_code":"GBR","name":"Alex Smith","title":"Prime Minister","start_date":"2022-10-25","ideology":"conservative","approval":35.0},
+  {"id":"00000000-0000-4000-8000-000000000008","country_code":"FRA","name":"Jean Dupont","title":"President","start_date":"2022-05-14","ideology":"centrist","approval":41.0}
+]
+

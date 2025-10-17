@@ -11,13 +11,14 @@ import logging
 import uuid
 from datetime import datetime
 
-from world_brain import get_world_brain, WorldState, GeneratedNews
+from .world_brain import get_world_brain, WorldState, GeneratedNews
 
 # Get singleton instance
 world_brain = get_world_brain()
-from world_data_service import world_data_service
-from world_leaders_service import world_leaders_service
-from historical_news_service import get_historical_news_service
+from .world_data_service import world_data_service
+from .world_leaders_service import world_leaders_service
+from .historical_news_service import get_historical_news_service
+from .refdata.router import router as ref_router
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -33,6 +34,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Reference data router
+app.include_router(ref_router, prefix="/ref", tags=["refdata"])
 
 # Pydantic models for API requests/responses
 class SimulationCreateRequest(BaseModel):
@@ -67,6 +71,19 @@ class HealthResponse(BaseModel):
     world_leaders_available: bool
     chatgpt_available: bool
 
+class GameSessionRequest(BaseModel):
+    game_mode: str
+    host_country: str
+    round_duration_minutes: int = 5
+    max_players: int = 1
+
+class GameSessionResponse(BaseModel):
+    session_id: str
+    game_mode: str
+    host_country: str
+    status: str
+    round_number: int = 0
+
 @app.get("/health")
 async def health_check():
     """Health check endpoint"""
@@ -91,6 +108,43 @@ async def health_check():
         world_leaders_available=len(world_leaders_service.leaders) > 0,
         chatgpt_available=chatgpt_available
     )
+
+# Game session storage (in-memory for now)
+game_sessions = {}
+
+@app.post("/game/create-session", response_model=GameSessionResponse)
+async def create_game_session(request: GameSessionRequest):
+    """Create a new game session"""
+    session_id = str(uuid.uuid4())
+    
+    game_sessions[session_id] = {
+        "session_id": session_id,
+        "game_mode": request.game_mode,
+        "host_country": request.host_country,
+        "status": "active",
+        "round_number": 0,
+        "round_duration_minutes": request.round_duration_minutes,
+        "max_players": request.max_players,
+        "created_at": datetime.now()
+    }
+    
+    logger.info(f"Created game session: {session_id}, mode: {request.game_mode}, country: {request.host_country}")
+    
+    return GameSessionResponse(
+        session_id=session_id,
+        game_mode=request.game_mode,
+        host_country=request.host_country,
+        status="active",
+        round_number=0
+    )
+
+@app.get("/game/{session_id}/status")
+async def get_game_status(session_id: str):
+    """Get game session status"""
+    if session_id not in game_sessions:
+        raise HTTPException(status_code=404, detail="Game session not found")
+    
+    return game_sessions[session_id]
 
 @app.post("/worldbrain/create", response_model=SimulationResponse)
 async def create_world_brain_simulation(request: SimulationCreateRequest, response: Response):
@@ -336,7 +390,8 @@ async def get_world_brain_status(simulation_id: str):
 @app.get("/worlddata/countries")
 async def get_countries():
     """Get all country data"""
-    return world_data_service.country_data
+    # Return the complete merged dataset (covers ~200+ countries)
+    return world_data_service.get_all_countries()
 
 @app.get("/worlddata/countries/{country_id}")
 async def get_country(country_id: str):

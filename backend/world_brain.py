@@ -10,8 +10,8 @@ from typing import Dict, List, Any, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-from world_data_service import world_data_service
-from world_leaders_service import world_leaders_service
+from .world_data_service import world_data_service
+from .world_leaders_service import world_leaders_service
 
 logger = logging.getLogger(__name__)
 
